@@ -169,4 +169,58 @@ class GameEngineTest {
         world.playerSmartAttack(preferCreep = false, preferDeny = true, preferStructure = true)
         assertEquals(enemyTower.id, ph.attackTargetId)
     }
+
+    @Test
+    fun playerAttackAnimAndDamageNumbersWork() {
+        val world = GameWorld("juggernaut", mode = GameMode.SANDBOX)
+        val ph = world.playerHero
+        val enemy = world.heroes.first { it.team != ph.team }
+        enemy.pos.set(ph.pos.x + 80f, ph.pos.y)
+
+        world.playerSmartAttack()
+        assertEquals(enemy.id, ph.attackTargetId)
+        world.step(0.05f)
+
+        assertTrue("Attack animation timer must activate", ph.attackAnimTimer > 0f)
+        assertTrue("Player hit must spawn floating damage number", world.floatingTexts.isNotEmpty())
+    }
+
+    @Test
+    fun mlbbHudGeometryHasZeroOverlapAndFitsAllPhones() {
+        val resolutions = listOf(1280f to 720f, 1920f to 1080f, 2400f to 1080f, 2560f to 1600f)
+        val geo = com.dota3.moba.render.HudGeometry()
+        for ((w, h) in resolutions) {
+            geo.layout(w, h)
+            val circles = mutableListOf<Pair<Vec2, Float>>()
+            for (i in 0..3) circles.add(geo.abilityCenters[i] to geo.abilityRadius)
+            circles.add(geo.attackCenter to geo.attackRadius)
+            circles.add(geo.minionCenter to geo.subRadius)
+            circles.add(geo.towerDenyCenter to geo.subRadius)
+            circles.add(geo.tpCenter to geo.utilRadius)
+            circles.add(geo.courierCenter to geo.utilRadius)
+            circles.add(geo.glyphCenter to geo.utilRadius)
+
+            // Every button must be strictly inside screen bounds!
+            for ((idx, pair) in circles.withIndex()) {
+                val (c, r) = pair
+                assertTrue("Circle $idx left out of bounds at ${w}x${h}", c.x - r >= 0f)
+                assertTrue("Circle $idx right out of bounds at ${w}x${h}", c.x + r <= w)
+                assertTrue("Circle $idx top out of bounds at ${w}x${h}", c.y - r >= 0f)
+                assertTrue("Circle $idx bottom out of bounds at ${w}x${h}", c.y + r <= h)
+            }
+
+            // No two buttons may overlap!
+            for (i in circles.indices) {
+                for (j in i + 1 until circles.size) {
+                    val d = circles[i].first.distTo(circles[j].first)
+                    val minD = circles[i].second + circles[j].second
+                    assertTrue("Circles $i and $j overlap at ${w}x${h}: d=$d < $minD", d >= minD - 1f)
+                }
+            }
+
+            // Item slots & Hero Plate fit inside screen and stay left of glyph button
+            assertTrue("Item bar overlaps glyph at ${w}x${h}", geo.itemSlots[5].right <= geo.glyphCenter.x - geo.utilRadius)
+            assertTrue("Hero plate fits at ${w}x${h}", geo.heroPlate.top >= 0f && geo.heroPlate.bottom <= geo.itemSlots[0].top)
+        }
+    }
 }

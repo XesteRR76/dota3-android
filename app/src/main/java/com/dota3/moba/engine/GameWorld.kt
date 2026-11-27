@@ -495,6 +495,10 @@ class GameWorld(
 
         // Cooldowns & Statuses
         tickUnitStatuses(h, dt)
+        if (h.attackAnimTimer > 0f) h.attackAnimTimer = (h.attackAnimTimer - dt).coerceAtLeast(0f)
+        if (abs(h.moveIntent.x) > 0.05f || abs(h.moveIntent.y) > 0.05f || h.tapMoveTarget != null) {
+            h.walkCycle += dt * 12f
+        }
         if (h.buybackCooldown > 0f) h.buybackCooldown = (h.buybackCooldown - dt).coerceAtLeast(0f)
         if (h.tpCooldown > 0f) h.tpCooldown = (h.tpCooldown - dt).coerceAtLeast(0f)
 
@@ -775,6 +779,8 @@ class GameWorld(
         if (h.attackCooldown > 0f) return
         h.facingAngle = h.pos.angleTo(target.pos)
         h.attackCooldown = h.def.baseAttackTime / (h.cachedAttackSpeed / 100f)
+        h.attackAnimDuration = minOf(0.32f, h.attackCooldown * 0.7f).coerceAtLeast(0.18f)
+        h.attackAnimTimer = h.attackAnimDuration
 
         // Breaking invisibility on attack (Shadow Blade bonus!)
         var bonusBackstab = 0f
@@ -857,10 +863,12 @@ class GameWorld(
             return
         }
 
-        val dealt = applyDamage(target, rawDmg, DamageType.PHYSICAL, attacker, showFloat = false)
+        val dealt = applyDamage(target, rawDmg, DamageType.PHYSICAL, attacker, showFloat = !isCrit)
         if (isCrit) {
-            addFloatingText(target.pos, "CRIT ${dealt.toInt()}!", 0xFFEF4444.toInt(), scale = 1.3f)
-            spawnParticles(target.pos, 0xFFEF4444.toInt(), 9, 80f)
+            addFloatingText(target.pos, "CRIT ${dealt.toInt()}!", 0xFFFF4D4D.toInt(), life = 1.15f, scale = 1.65f)
+            spawnParticles(target.pos, 0xFFEF4444.toInt(), 12, 95f)
+        } else if (attacker.isPlayer || (target is HeroEntity && target.isPlayer)) {
+            spawnParticles(target.pos, 0xFFFDE047.toInt(), 4, 48f)
         }
 
         // Lifesteal
@@ -2720,8 +2728,13 @@ class GameWorld(
         }
         if (target != null) {
             h.attackTargetId = target.id
+            h.facingAngle = h.pos.angleTo(target.pos)
             if (target.pos.distTo(h.pos) > h.cachedAttackRange) h.tapMoveTarget = target.pos.copyVec()
         } else {
+            if (h.attackAnimTimer <= 0f) {
+                h.attackAnimDuration = 0.22f
+                h.attackAnimTimer = 0.22f
+            }
             addFloatingText(h.pos, "No Target", 0xFF94A3B8.toInt(), 0.5f)
         }
     }

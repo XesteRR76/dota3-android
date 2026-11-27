@@ -139,6 +139,9 @@ class HeroEntity(
     var dismemberTimer: Float = 0f
     var dismemberTargetId: String? = null
     var dismemberAccum: Float = 0f
+    var attackAnimTimer: Float = 0f
+    var attackAnimDuration: Float = 0.30f
+    var walkCycle: Float = 0f
 
     // Input / AI targetting
     var moveIntent = Vec2(0f, 0f)
