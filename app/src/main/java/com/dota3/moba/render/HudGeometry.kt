@@ -142,14 +142,55 @@ class HudGeometry {
         val topH = (h * 0.070f).coerceIn(36f, 74f)
         topHeader.set(w * 0.5f - topW * 0.5f, 6f, w * 0.5f + topW * 0.5f, 6f + topH)
 
+        // Left Joystick anchor zone & Console sizing (computed before right-thumb fan so bar span stays guaranteed)
+        val baseJoyR = (h * 0.095f).coerceIn(46f, 106f) * custom.joystickScale
+        joystickRadius = baseJoyR.coerceAtMost(minOf(h * 0.145f, w * 0.080f))
+        val minJoyY = tacticalBtns[3].bottom + joystickRadius + 10f
+        val rawJoyX = pad + joystickRadius * 1.24f + custom.joystickOffsetX * w
+        val rawJoyY = h - pad - joystickRadius * 1.22f + custom.joystickOffsetY * h
+        joystickRestCenter.set(
+            rawJoyX.coerceIn(pad + joystickRadius + 4f, w * 0.25f),
+            rawJoyY.coerceIn(minJoyY.coerceAtMost(h - pad - joystickRadius), h - pad - joystickRadius)
+        )
+
+        val consoleH = ((h * 0.185f).coerceIn(110f, 212f) * custom.consoleScale).coerceAtMost(h * 0.25f)
+        val consoleBottom = h - pad * 0.65f
+        val consoleTop = consoleBottom - consoleH
+        utilRadius = (consoleH * 0.20f).coerceIn(20f, 38f)
+
         // MLBB Ergonomic Right-Thumb Fan (tight reachable arc Q=186°..R=264°)
         val baseAttackR = (h * 0.080f).coerceIn(44f, 92f) * custom.skillScale
-        attackRadius = baseAttackR.coerceAtMost(h * 0.115f)
+        attackRadius = baseAttackR.coerceAtMost(minOf(h * 0.115f, w * 0.065f))
+        abilityRadius = attackRadius * 0.56f
+        val arcR = attackRadius * 2.68f
+        val anglesDeg = floatArrayOf(186f, 212f, 238f, 264f)
+        val pillW = abilityRadius * 1.30f
+        val pillH = (h * 0.040f).coerceIn(24f, 44f)
+
+        val qRad = Math.toRadians(anglesDeg[0].toDouble()).toFloat()
+        val qEdgeOffset = abs(cos(qRad)) * (pillW * 0.5f) + abs(sin(qRad)) * (pillH * 0.5f)
+        val qPDist = abilityRadius + qEdgeOffset + 6f
+        val qOuterOffsetFromAtk = minOf(
+            cos(qRad) * arcR - abilityRadius,
+            cos(qRad) * (arcR + qPDist) - pillW * 0.5f
+        )
+        val barLeft = joystickRestCenter.x + joystickRadius + (w * 0.012f).coerceAtLeast(12f)
+        val utilColPad = (w * 0.010f).coerceAtLeast(10f)
+        val minCenterConsoleW = 220f
+
         val rawAtkX = w - pad - attackRadius * 1.14f + custom.skillOffsetX * w
         val rawAtkY = h - pad - attackRadius * 1.14f + custom.skillOffsetY * h
         val minArcMargin = attackRadius * 2.68f + attackRadius * 0.56f + 8f
+        val maxAtkX = w - pad - attackRadius * 1.05f
+        val minAtkX = minOf(
+            maxAtkX,
+            maxOf(
+                w * 0.55f + minArcMargin * 0.35f,
+                barLeft + minCenterConsoleW - qOuterOffsetFromAtk + utilRadius * 2f + utilColPad * 2f
+            )
+        )
         attackCenter.set(
-            rawAtkX.coerceIn(w * 0.55f + minArcMargin * 0.35f, w - pad - attackRadius * 1.05f),
+            rawAtkX.coerceIn(minAtkX, maxAtkX),
             rawAtkY.coerceIn(shopBtn.bottom + minArcMargin * 0.65f, h - pad - attackRadius * 1.05f)
         )
 
@@ -169,11 +210,6 @@ class HudGeometry {
             targetLockCenters[i].set(attackCenter.x + cos(lRad) * lockDist, attackCenter.y + sin(lRad) * lockDist)
         }
 
-        abilityRadius = attackRadius * 0.56f
-        val arcR = attackRadius * 2.68f
-        val anglesDeg = floatArrayOf(186f, 212f, 238f, 264f)
-        val pillW = abilityRadius * 1.30f
-        val pillH = (h * 0.040f).coerceIn(24f, 44f)
         for (i in 0..3) {
             val rad = Math.toRadians(anglesDeg[i].toDouble()).toFloat()
             val cx = attackCenter.x + cos(rad) * arcR
@@ -192,32 +228,14 @@ class HudGeometry {
         val cancelY = (levelUpPills[3].top - cancelRadius - 10f).coerceAtLeast(shopBtn.bottom + cancelRadius + 8f)
         cancelCenter.set(w - pad - cancelRadius * 1.15f, cancelY)
 
-        // Left Joystick anchor zone (customizable scale & position, safely clear of Tactical Grid!)
-        val baseJoyR = (h * 0.095f).coerceIn(46f, 106f) * custom.joystickScale
-        joystickRadius = baseJoyR.coerceAtMost(h * 0.145f)
-        val minJoyY = tacticalBtns[3].bottom + joystickRadius + 10f
-        val rawJoyX = pad + joystickRadius * 1.24f + custom.joystickOffsetX * w
-        val rawJoyY = h - pad - joystickRadius * 1.22f + custom.joystickOffsetY * h
-        joystickRestCenter.set(
-            rawJoyX.coerceIn(pad + joystickRadius + 4f, w * 0.25f),
-            rawJoyY.coerceIn(minJoyY.coerceAtMost(h - pad - joystickRadius), h - pad - joystickRadius)
-        )
-
-        // Dota 2 Bottom Console height & adjacent Courier / Glyph column
-        val consoleH = ((h * 0.185f).coerceIn(110f, 212f) * custom.consoleScale).coerceAtMost(h * 0.25f)
-        val consoleBottom = h - pad * 0.65f
-        val consoleTop = consoleBottom - consoleH
-
-        utilRadius = (consoleH * 0.20f).coerceIn(20f, 38f)
+        // Dota 2 Adjacent Courier / Glyph column & Bottom Hero Console
         val qOuterLeft = minOf(abilityCenters[0].x - abilityRadius, levelUpPills[0].left)
-        val utilColX = qOuterLeft - utilRadius - (w * 0.010f).coerceAtLeast(10f)
+        val utilColX = qOuterLeft - utilRadius - utilColPad
         courierCenter.set(utilColX, consoleTop + utilRadius + 2f)
         glyphCenter.set(utilColX, consoleBottom - utilRadius - 2f)
 
-        // Bottom-center Authentic Dota 2 Hero Console
-        val barLeft = joystickRestCenter.x + joystickRadius + (w * 0.012f).coerceAtLeast(12f)
-        val barRight = utilColX - utilRadius - (w * 0.010f).coerceAtLeast(10f)
-        val availW = (barRight - barLeft).coerceAtLeast(220f)
+        val barRight = utilColX - utilRadius - utilColPad
+        val availW = (barRight - barLeft).coerceAtLeast(160f)
         val consoleW = availW.coerceAtMost(h * 1.24f * custom.consoleScale)
         val cLeft = barLeft + (availW - consoleW) * 0.5f
         val cRight = cLeft + consoleW
@@ -229,7 +247,7 @@ class HudGeometry {
         val gap = (consoleW * 0.009f).coerceIn(4f, 9f)
 
         // 1) Portrait + Level + XP Bar
-        val portW = minOf(consoleW * 0.145f, innerH * 0.94f).coerceAtLeast(36f)
+        val portW = minOf(consoleW * 0.145f, innerH * 0.94f).coerceAtLeast(minOf(36f, consoleW * 0.145f))
         portraitBox.set(cLeft + innerPad, consoleTop + innerPad, cLeft + innerPad + portW, consoleBottom - innerPad - xpH - 3f)
         xpBarBox.set(portraitBox.left, portraitBox.bottom + 3f, portraitBox.right, consoleBottom - innerPad)
 

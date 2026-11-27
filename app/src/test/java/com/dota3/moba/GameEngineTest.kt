@@ -549,17 +549,20 @@ class GameEngineTest {
         val geo = HudGeometry()
         val presets = listOf(
             HudCustomization(0.75f, 0.75f, 0.80f, 0.80f, -0.05f, -0.08f, -0.06f, -0.08f),
-            HudCustomization(1.28f, 1.20f, 1.18f, 1.28f, 0.06f, 0.04f, 0.04f, 0.04f)
+            HudCustomization(1.28f, 1.20f, 1.18f, 1.28f, 0.06f, 0.04f, 0.04f, 0.04f),
+            HudCustomization(1.28f, 1.20f, 1.18f, 1.28f, 0.06f, -0.08f, -0.06f, -0.08f)
         )
-        for ((w, h) in listOf(854f to 480f, 800f to 600f, 2400f to 1080f)) {
+        for ((w, h) in listOf(854f to 480f, 800f to 600f, 2400f to 1080f, 2208f to 1768f)) {
             for (preset in presets) {
                 geo.layout(w, h, preset)
-                assertTrue(geo.joystickRestCenter.x - geo.joystickRadius >= 0f)
-                assertTrue(geo.joystickRestCenter.y + geo.joystickRadius <= h)
-                assertTrue(geo.attackCenter.x + geo.attackRadius <= w)
-                assertTrue(geo.attackCenter.y + geo.attackRadius <= h)
-                assertTrue(geo.heroConsole.left >= geo.joystickRestCenter.x + geo.joystickRadius)
-                assertTrue(geo.heroConsole.right <= geo.courierCenter.x - geo.utilRadius)
+                assertTrue("Joystick left OOB at ${w}x${h}", geo.joystickRestCenter.x - geo.joystickRadius >= 0f)
+                assertTrue("Joystick bottom OOB at ${w}x${h}", geo.joystickRestCenter.y + geo.joystickRadius <= h)
+                assertTrue("Joystick overlaps tactical at ${w}x${h}", geo.joystickRestCenter.y - geo.joystickRadius >= geo.tacticalBtns[3].bottom)
+                assertTrue("Attack right OOB at ${w}x${h}", geo.attackCenter.x + geo.attackRadius <= w)
+                assertTrue("Attack bottom OOB at ${w}x${h}", geo.attackCenter.y + geo.attackRadius <= h)
+                assertTrue("Console overlaps joystick at ${w}x${h}", geo.heroConsole.left >= geo.joystickRestCenter.x + geo.joystickRadius)
+                assertTrue("Console overlaps courier at ${w}x${h}", geo.heroConsole.right <= geo.courierCenter.x - geo.utilRadius)
+                assertTrue("Items overlap courier at ${w}x${h}", geo.itemSlots[5].right <= geo.courierCenter.x - geo.utilRadius)
             }
         }
     }
