@@ -165,18 +165,18 @@ class HudGeometry {
         val gap = (consoleW * 0.009f).coerceIn(4f, 9f)
 
         // 1) Portrait + Level + XP Bar
-        val portW = (consoleW * 0.145f).coerceIn(62f, innerH * 0.94f)
+        val portW = minOf(consoleW * 0.145f, innerH * 0.94f).coerceAtLeast(36f)
         portraitBox.set(cLeft + innerPad, consoleTop + innerPad, cLeft + innerPad + portW, consoleBottom - innerPad - xpH - 3f)
         xpBarBox.set(portraitBox.left, portraitBox.bottom + 3f, portraitBox.right, consoleBottom - innerPad)
 
         // 2) Attributes (STR/AGI/INT), Combat Stats & Talent Tree Emblem
-        val attrW = consoleW * 0.242f
+        val attrW = consoleW * 0.235f
         val attrLeft = portraitBox.right + gap
         attrBox.set(attrLeft, consoleTop + innerPad, attrLeft + attrW, consoleBottom - innerPad)
         talentHudBtn.set(attrLeft, consoleTop + innerPad, attrLeft + attrW * 0.56f, consoleTop + innerPad + (innerH * 0.28f).coerceIn(22f, 40f))
 
         // 3) TP & Neutral Item Column (right edge of Dota Console)
-        val slotColW = maxOf(innerH * 0.43f, utilRadius * 1.98f)
+        val slotColW = minOf(consoleW * 0.130f, maxOf(innerH * 0.43f, utilRadius * 1.98f))
         val tpRight = cRight - innerPad
         val tpLeft = tpRight - slotColW
         val slotGapY = 5f
@@ -188,7 +188,7 @@ class HudGeometry {
         // 4) Dota 2 3x2 Inventory Grid
         val itemGapX = 4f
         val itemGapY = 4f
-        val itemGridW = (consoleW * 0.275f).coerceIn(110f, slotBoxH * 1.32f * 3f + itemGapX * 2f)
+        val itemGridW = minOf(consoleW * 0.275f, slotBoxH * 1.32f * 3f + itemGapX * 2f)
         val itemRight = tpLeft - gap
         val itemLeft = itemRight - itemGridW
         val itemSlotW = (itemGridW - itemGapX * 2f) / 3f
@@ -203,7 +203,7 @@ class HudGeometry {
 
         // 5) Center HP & Mana Bars Plate
         val plateLeft = attrBox.right + gap
-        val plateRight = (itemLeft - gap).coerceAtLeast(plateLeft + 48f)
+        val plateRight = (itemLeft - gap).coerceAtLeast(plateLeft + 16f)
         heroPlate.set(plateLeft, consoleTop + innerPad, plateRight, consoleBottom - innerPad)
 
         buybackBtn.set(w * 0.40f, h * 0.62f, w * 0.60f, h * 0.72f)
