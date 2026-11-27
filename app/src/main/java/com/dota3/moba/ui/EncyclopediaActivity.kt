@@ -2,7 +2,6 @@ package com.dota3.moba.ui
 
 import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
@@ -29,7 +28,7 @@ class EncyclopediaActivity : AppCompatActivity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFF0A0D14.toInt())
+            setBackgroundColor(DotaRebornStyle.BG_OBSIDIAN)
             setPadding(36, 22, 36, 22)
         }
 
@@ -41,14 +40,14 @@ class EncyclopediaActivity : AppCompatActivity() {
             text = "DOTA 3 ARMORY & COMPENDIUM"
             textSize = 21f
             setTypeface(null, Typeface.BOLD)
-            setTextColor(0xFFF5B041.toInt())
+            setTextColor(DotaRebornStyle.GOLD_BRIGHT)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
 
         topBar.addView(tabBtn("HEROES (${HeroCatalog.allHeroes.size})") { showHeroes() })
         topBar.addView(tabBtn("ITEMS (${ItemCatalog.allItems.size})") { showItems() })
         topBar.addView(tabBtn("NEUTRALS (${ItemCatalog.neutralItems.size})") { showNeutrals() })
-        topBar.addView(tabBtn("BACK") { finish() })
+        topBar.addView(DotaRebornStyle.rebornButton(this, "BACK", DotaRebornStyle.CRIMSON_TOP, DotaRebornStyle.CRIMSON_BOT, 0xFFF87171.toInt()) { finish() })
         root.addView(topBar)
 
         val scroll = ScrollView(this).apply {
@@ -69,7 +68,7 @@ class EncyclopediaActivity : AppCompatActivity() {
         for (h in HeroCatalog.allHeroes) {
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                background = boxBg(0xFF131824.toInt(), h.primaryColor)
+                background = DotaRebornStyle.beveledPanel(0xEE131824.toInt(), 0xEE090D15.toInt(), h.primaryColor, 12f, 2)
                 setPadding(18, 14, 18, 14)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = 12
@@ -99,7 +98,7 @@ class EncyclopediaActivity : AppCompatActivity() {
             headCol.addView(TextView(this).apply {
                 text = "Innate: ${h.innateName} — ${h.innateDesc}\nFacets: ${h.facets.joinToString(" | ") { "${it.name}: ${it.description}" }}"
                 textSize = 11.5f
-                setTextColor(0xFFF5B041.toInt())
+                setTextColor(DotaRebornStyle.BRONZE_GOLD)
             })
             top.addView(headCol)
             card.addView(top)
@@ -141,7 +140,7 @@ class EncyclopediaActivity : AppCompatActivity() {
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = boxBg(0xFF131824.toInt(), item.color)
+                background = DotaRebornStyle.beveledPanel(0xEE131824.toInt(), 0xEE090D15.toInt(), DotaRebornStyle.BRONZE_DARK, 10f, 2)
                 setPadding(14, 10, 14, 10)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = 8
@@ -158,11 +157,14 @@ class EncyclopediaActivity : AppCompatActivity() {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
+            val compStr = if (item.components.isNotEmpty()) {
+                "  •  Craft: " + item.components.joinToString(" + ") { ItemCatalog.get(it)?.name ?: it }
+            } else ""
             col.addView(TextView(this).apply {
-                text = "${item.name} — ${item.cost}g  (${item.category.title})"
-                textSize = 14f
+                text = "${item.name} — ${item.cost}g  (${item.category.title})$compStr"
+                textSize = 13.5f
                 setTypeface(null, Typeface.BOLD)
-                setTextColor(0xFFF5B041.toInt())
+                setTextColor(DotaRebornStyle.GOLD_BRIGHT)
             })
             col.addView(TextView(this).apply {
                 text = item.description
@@ -180,7 +182,7 @@ class EncyclopediaActivity : AppCompatActivity() {
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = boxBg(0xFF131824.toInt(), 0xFFA855F7.toInt())
+                background = DotaRebornStyle.beveledPanel(0xEE131824.toInt(), 0xEE090D15.toInt(), 0xFFA855F7.toInt(), 10f, 2)
                 setPadding(14, 10, 14, 10)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = 8
@@ -213,23 +215,10 @@ class EncyclopediaActivity : AppCompatActivity() {
         }
     }
 
-    private fun tabBtn(label: String, onClick: () -> Unit): Button = Button(this).apply {
-        text = label
-        textSize = 12f
-        setTextColor(Color.WHITE)
-        background = boxBg(0xFF1E293B.toInt(), 0xFF475569.toInt())
-        setPadding(18, 8, 18, 8)
-        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-            leftMargin = 10
+    private fun tabBtn(label: String, onClick: () -> Unit): Button =
+        DotaRebornStyle.rebornButton(this, label, DotaRebornStyle.SLATE_TOP, DotaRebornStyle.SLATE_BOT, DotaRebornStyle.BRONZE_GOLD, 11.5f) {
+            onClick()
         }
-        setOnClickListener { onClick() }
-    }
-
-    private fun boxBg(fill: Int, stroke: Int) = GradientDrawable().apply {
-        setColor(fill)
-        setStroke(2, stroke)
-        cornerRadius = 12f
-    }
 
     private fun hideSystemBars() {
         WindowCompat.setDecorFitsSystemWindows(window, false)

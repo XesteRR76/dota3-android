@@ -23,13 +23,37 @@ data class BoxBounds(
         left < other.right && right > other.left && top < other.bottom && bottom > other.top
 }
 
+data class HudCustomization(
+    val joystickScale: Float = 1.0f,
+    val skillScale: Float = 1.0f,
+    val consoleScale: Float = 1.0f,
+    val minimapScale: Float = 1.0f,
+    val joystickOffsetX: Float = 0f, // normalized [-0.06..0.06] of screen width
+    val joystickOffsetY: Float = 0f, // normalized [-0.08..0.04] of screen height
+    val skillOffsetX: Float = 0f,    // normalized [-0.06..0.04] of screen width
+    val skillOffsetY: Float = 0f     // normalized [-0.08..0.04] of screen height
+) {
+    fun clamped(): HudCustomization = HudCustomization(
+        joystickScale = joystickScale.coerceIn(0.75f, 1.28f),
+        skillScale = skillScale.coerceIn(0.75f, 1.20f),
+        consoleScale = consoleScale.coerceIn(0.80f, 1.18f),
+        minimapScale = minimapScale.coerceIn(0.80f, 1.28f),
+        joystickOffsetX = joystickOffsetX.coerceIn(-0.05f, 0.06f),
+        joystickOffsetY = joystickOffsetY.coerceIn(-0.08f, 0.04f),
+        skillOffsetX = skillOffsetX.coerceIn(-0.06f, 0.04f),
+        skillOffsetY = skillOffsetY.coerceIn(-0.08f, 0.04f)
+    )
+}
+
 /**
- * Pure Kotlin Dota 2 Bottom Console + MLBB Ergonomic Right-Thumb Skill Arc layout calculator.
+ * Pure Kotlin Dota 2 Bottom Console + MLBB Ergonomic Right-Thumb Skill Arc +
+ * Enemy Target-Lock Portraits + Tactical Bot Command Grid layout calculator.
  */
 class HudGeometry {
     val minimap = BoxBounds()
     val camBtn = BoxBounds()
     val zoomBtn = BoxBounds()
+    val tacticalBtns = Array(4) { BoxBounds() } // PUSH, ROSH, DEF, BACK
     val quickBuy = Array(2) { BoxBounds() }
 
     val shopBtn = BoxBounds()
@@ -50,12 +74,15 @@ class HudGeometry {
     val neutralSlot = BoxBounds()
     val buybackBtn = BoxBounds()
 
-    // MLBB Right-Thumb Attack & Skill Fan
+    // MLBB Right-Thumb Attack & Skill Fan + Target-Lock Portraits
     val attackCenter = Vec2()
     var attackRadius = 56f
     val minionCenter = Vec2()
     val towerDenyCenter = Vec2()
     var subRadius = 30f
+
+    val targetLockCenters = Array(3) { Vec2() }
+    var targetLockRadius = 18f
 
     val abilityCenters = Array(4) { Vec2() }
     var abilityRadius = 36f
@@ -72,24 +99,38 @@ class HudGeometry {
     var joystickRestCenter = Vec2()
     var joystickRadius = 64f
 
-    fun layout(w: Float, h: Float) {
+    fun layout(w: Float, h: Float, rawCustom: HudCustomization = HudCustomization()) {
+        val custom = rawCustom.clamped()
         val pad = (w * 0.011f).coerceIn(10f, 26f)
-        val mmSize = (h * 0.232f).coerceIn(108f, 240f)
+        val mmSize = ((h * 0.232f).coerceIn(108f, 240f) * custom.minimapScale).coerceAtMost(h * 0.30f)
         minimap.set(pad, pad, pad + mmSize, pad + mmSize)
-        val camH = (h * 0.044f).coerceIn(24f, 48f)
+        val camH = (h * 0.044f).coerceIn(24f, 46f)
         camBtn.set(pad, minimap.bottom + 5f, pad + mmSize * 0.61f, minimap.bottom + 5f + camH)
         zoomBtn.set(camBtn.right + 5f, minimap.bottom + 5f, pad + mmSize, minimap.bottom + 5f + camH)
 
+        // 2x2 Tactical Bot Command Grid right under Minimap/Cam controls
+        val tacTop = camBtn.bottom + 6f
+        val tacGap = 4f
+        val tacW = (mmSize - tacGap) * 0.5f
+        val tacH = (h * 0.042f).coerceIn(22f, 40f)
+        for (i in 0..3) {
+            val col = i % 2
+            val row = i / 2
+            val l = pad + col * (tacW + tacGap)
+            val t = tacTop + row * (tacH + tacGap)
+            tacticalBtns[i].set(l, t, l + tacW, t + tacH)
+        }
+
         // 2 MLBB Quick-Buy Item Cards cleanly beside Minimap
         val qbLeft = minimap.right + 8f
-        val qbW = (w * 0.112f).coerceIn(104f, 224f)
-        val qbH = (h * 0.056f).coerceIn(30f, 60f)
+        val qbW = (w * 0.112f).coerceIn(100f, 224f)
+        val qbH = (h * 0.056f).coerceIn(30f, 58f)
         quickBuy[0].set(qbLeft, pad, qbLeft + qbW, pad + qbH)
         quickBuy[1].set(qbLeft, pad + qbH + 5f, qbLeft + qbW, pad + qbH * 2f + 5f)
 
         // Top Right Menu Buttons
-        val btnW = (w * 0.068f).coerceIn(62f, 134f)
-        val btnH = (h * 0.058f).coerceIn(32f, 60f)
+        val btnW = (w * 0.068f).coerceIn(60f, 134f)
+        val btnH = (h * 0.058f).coerceIn(32f, 58f)
         pauseBtn.set(w - pad - btnW * 0.85f, pad, w - pad, pad + btnH)
         statsBtn.set(pauseBtn.left - 6f - btnW, pad, pauseBtn.left - 6f, pad + btnH)
         talentBtn.set(statsBtn.left - 6f - btnW * 1.12f, pad, statsBtn.left - 6f, pad + btnH)
@@ -97,13 +138,20 @@ class HudGeometry {
 
         // Top Center Score & Clock Header (guaranteed clear of Quick-Buy & Shop)
         val centerClearHalf = minOf(w * 0.5f - (quickBuy[0].right + 8f), (shopBtn.left - 8f) - w * 0.5f).coerceAtLeast(60f)
-        val topW = minOf(w * 0.27f, centerClearHalf * 2f).coerceAtLeast(120f)
-        val topH = (h * 0.070f).coerceIn(36f, 76f)
+        val topW = minOf(w * 0.27f, centerClearHalf * 2f).coerceAtLeast(116f)
+        val topH = (h * 0.070f).coerceIn(36f, 74f)
         topHeader.set(w * 0.5f - topW * 0.5f, 6f, w * 0.5f + topW * 0.5f, 6f + topH)
 
         // MLBB Ergonomic Right-Thumb Fan (tight reachable arc Q=186°..R=264°)
-        attackRadius = (h * 0.080f).coerceIn(44f, 94f)
-        attackCenter.set(w - pad - attackRadius * 1.14f, h - pad - attackRadius * 1.14f)
+        val baseAttackR = (h * 0.080f).coerceIn(44f, 92f) * custom.skillScale
+        attackRadius = baseAttackR.coerceAtMost(h * 0.115f)
+        val rawAtkX = w - pad - attackRadius * 1.14f + custom.skillOffsetX * w
+        val rawAtkY = h - pad - attackRadius * 1.14f + custom.skillOffsetY * h
+        val minArcMargin = attackRadius * 2.68f + attackRadius * 0.56f + 8f
+        attackCenter.set(
+            rawAtkX.coerceIn(w * 0.55f + minArcMargin * 0.35f, w - pad - attackRadius * 1.05f),
+            rawAtkY.coerceIn(shopBtn.bottom + minArcMargin * 0.65f, h - pad - attackRadius * 1.05f)
+        )
 
         subRadius = attackRadius * 0.48f
         val subDist = attackRadius * 1.56f
@@ -111,6 +159,15 @@ class HudGeometry {
         val towerRad = Math.toRadians(282.0).toFloat()
         minionCenter.set(attackCenter.x + cos(minionRad) * subDist, attackCenter.y + sin(minionRad) * subDist)
         towerDenyCenter.set(attackCenter.x + cos(towerRad) * subDist, attackCenter.y + sin(towerRad) * subDist)
+
+        // 3 MLBB Enemy Hero Target-Lock Portrait Icons nestled between CREEP (162°) and TWR/! (282°)
+        targetLockRadius = attackRadius * 0.27f
+        val lockDist = attackRadius * 1.62f
+        val lockAnglesDeg = floatArrayOf(192f, 217f, 242f)
+        for (i in 0..2) {
+            val lRad = Math.toRadians(lockAnglesDeg[i].toDouble()).toFloat()
+            targetLockCenters[i].set(attackCenter.x + cos(lRad) * lockDist, attackCenter.y + sin(lRad) * lockDist)
+        }
 
         abilityRadius = attackRadius * 0.56f
         val arcR = attackRadius * 2.68f
@@ -130,17 +187,24 @@ class HudGeometry {
             levelUpPills[i].set(px - pillW * 0.5f, py - pillH * 0.5f, px + pillW * 0.5f, py + pillH * 0.5f)
         }
 
-        // Ergonomic Cancel X right above the skill arc (easy right-thumb reach!)
-        cancelRadius = (h * 0.052f).coerceIn(28f, 56f)
-        val cancelY = (levelUpPills[3].top - cancelRadius - 12f).coerceAtLeast(shopBtn.bottom + cancelRadius + 10f)
+        // Ergonomic Cancel X right above the skill arc
+        cancelRadius = (h * 0.050f).coerceIn(26f, 54f)
+        val cancelY = (levelUpPills[3].top - cancelRadius - 10f).coerceAtLeast(shopBtn.bottom + cancelRadius + 8f)
         cancelCenter.set(w - pad - cancelRadius * 1.15f, cancelY)
 
-        // Left Joystick anchor zone
-        joystickRadius = (h * 0.095f).coerceIn(48f, 108f)
-        joystickRestCenter.set(pad + joystickRadius * 1.24f, h - pad - joystickRadius * 1.22f)
+        // Left Joystick anchor zone (customizable scale & position, safely clear of Tactical Grid!)
+        val baseJoyR = (h * 0.095f).coerceIn(46f, 106f) * custom.joystickScale
+        joystickRadius = baseJoyR.coerceAtMost(h * 0.145f)
+        val minJoyY = tacticalBtns[3].bottom + joystickRadius + 10f
+        val rawJoyX = pad + joystickRadius * 1.24f + custom.joystickOffsetX * w
+        val rawJoyY = h - pad - joystickRadius * 1.22f + custom.joystickOffsetY * h
+        joystickRestCenter.set(
+            rawJoyX.coerceIn(pad + joystickRadius + 4f, w * 0.25f),
+            rawJoyY.coerceIn(minJoyY.coerceAtMost(h - pad - joystickRadius), h - pad - joystickRadius)
+        )
 
         // Dota 2 Bottom Console height & adjacent Courier / Glyph column
-        val consoleH = (h * 0.185f).coerceIn(112f, 216f)
+        val consoleH = ((h * 0.185f).coerceIn(110f, 212f) * custom.consoleScale).coerceAtMost(h * 0.25f)
         val consoleBottom = h - pad * 0.65f
         val consoleTop = consoleBottom - consoleH
 
@@ -153,8 +217,8 @@ class HudGeometry {
         // Bottom-center Authentic Dota 2 Hero Console
         val barLeft = joystickRestCenter.x + joystickRadius + (w * 0.012f).coerceAtLeast(12f)
         val barRight = utilColX - utilRadius - (w * 0.010f).coerceAtLeast(10f)
-        val availW = (barRight - barLeft).coerceAtLeast(240f)
-        val consoleW = availW.coerceAtMost(h * 1.24f)
+        val availW = (barRight - barLeft).coerceAtLeast(220f)
+        val consoleW = availW.coerceAtMost(h * 1.24f * custom.consoleScale)
         val cLeft = barLeft + (availW - consoleW) * 0.5f
         val cRight = cLeft + consoleW
         heroConsole.set(cLeft, consoleTop, cRight, consoleBottom)

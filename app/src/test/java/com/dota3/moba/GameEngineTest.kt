@@ -5,7 +5,11 @@ import com.dota3.moba.core.Vec2
 import com.dota3.moba.data.HeroCatalog
 import com.dota3.moba.data.ItemCatalog
 import com.dota3.moba.engine.GameWorld
+import com.dota3.moba.engine.MapLayout
 import com.dota3.moba.model.*
+import com.dota3.moba.render.DotaCameraController
+import com.dota3.moba.render.HudCustomization
+import com.dota3.moba.render.HudGeometry
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -23,9 +27,13 @@ class GameEngineTest {
         val ids = ItemCatalog.allItems.map { it.id }.toSet()
         assertEquals(ItemCatalog.allItems.size, ids.size)
         for (item in ItemCatalog.allItems) {
+            var compCostSum = 0
             for (comp in item.components) {
-                assertNotNull("Missing component $comp for ${item.id}", ItemCatalog.get(comp))
+                val cDef = ItemCatalog.get(comp)
+                assertNotNull("Missing component $comp for ${item.id}", cDef)
+                compCostSum += cDef!!.cost
             }
+            assertTrue("Item ${item.id} cost (${item.cost}) < components sum ($compCostSum)", item.cost >= compCostSum)
         }
         assertEquals(12, ItemCatalog.neutralItems.size)
     }
@@ -210,6 +218,7 @@ class GameEngineTest {
             circles.add(geo.courierCenter to geo.utilRadius)
             circles.add(geo.glyphCenter to geo.utilRadius)
             circles.add(geo.cancelCenter to geo.cancelRadius)
+            for (i in 0..2) circles.add(geo.targetLockCenters[i] to geo.targetLockRadius)
 
             // Every button must be strictly inside screen bounds!
             for ((idx, pair) in circles.withIndex()) {
@@ -227,6 +236,13 @@ class GameEngineTest {
                     val minD = circles[i].second + circles[j].second
                     assertTrue("Circles $i and $j overlap at ${w}x${h}: d=$d < $minD", d >= minD - 1f)
                 }
+            }
+
+            // Tactical 2x2 buttons stay inside screen and clear of joystick / console / quickBuy
+            for ((ti, tb) in geo.tacticalBtns.withIndex()) {
+                assertTrue("Tactical $ti out of bounds at ${w}x${h}", tb.left >= 0f && tb.right <= w && tb.top >= geo.camBtn.bottom && tb.bottom <= h)
+                assertFalse("Tactical $ti overlaps heroConsole at ${w}x${h}", tb.overlaps(geo.heroConsole))
+                assertTrue("Tactical $ti overlaps joystick at ${w}x${h}", tb.bottom <= geo.joystickRestCenter.y - geo.joystickRadius)
             }
 
             // Top header stays clear of Quick-Buy and Shop menu
@@ -382,5 +398,188 @@ class GameEngineTest {
         val freeCamTp = world.smartTpTarget(ph, customCam, camLocked = false)
         assertEquals(customCam.x, freeCamTp.x, 1f)
         assertEquals(customCam.y, freeCamTp.y, 1f)
+    }
+
+    @Test
+    fun craftTreePieceByPieceQuickBuyAndNestedConsume() {
+        // Queue for Daedalus includes nested Blades of Attack -> Crystalys -> Mithril Hammer -> Daedalus
+        val fullQueue = ItemCatalog.getQuickBuyQueue("daedalus", emptyList())
+        assertEquals(listOf("blades_of_attack", "crystalys", "mithril_hammer", "daedalus"), fullQueue)
+
+        // Duplicate components (Desolator = 2x Mithril Hammer)
+        val desoQueueOneOwned = ItemCatalog.getQuickBuyQueue("desolator", listOf("mithril_hammer"))
+        assertEquals(listOf("mithril_hammer", "desolator"), desoQueueOneOwned)
+
+        // Piece-by-piece purchase of BKB (Ogre Axe 1000 + Mithril Hammer 1600 + 1450 = 4050)
+        val world = GameWorld("juggernaut", mode = GameMode.SANDBOX)
+        val ph = world.playerHero
+        ph.inventory.clear()
+        ph.gold = 4050
+        assertTrue(world.buyItem(ph, "ogre_axe"))
+        assertTrue(world.buyItem(ph, "mithril_hammer"))
+        assertEquals(1450, ph.gold)
+        assertTrue(world.buyItem(ph, "bkb"))
+        assertEquals(0, ph.gold)
+        assertTrue(ph.hasItem("bkb"))
+        assertFalse(ph.hasItem("ogre_axe"))
+        assertFalse(ph.hasItem("mithril_hammer"))
+
+        // Nested direct craft: owning Blades of Attack discounts Daedalus by 450g
+        ph.inventory.clear()
+        ph.gold = 5150
+        assertTrue(world.buyItem(ph, "blades_of_attack"))
+        assertEquals(4700, ph.gold)
+        assertTrue(world.buyItem(ph, "daedalus"))
+        assertEquals(0, ph.gold)
+        assertTrue(ph.hasItem("daedalus"))
+        assertFalse(ph.hasItem("blades_of_attack"))
+    }
+
+    @Test
+    fun threeHitComboAndZeroMsAttack() {
+        val world = GameWorld("juggernaut", mode = GameMode.SANDBOX)
+        val ph = world.playerHero
+        val enemy = world.heroes.first { it.team != ph.team }
+        repeat(3) { enemy.inventory.add(com.dota3.moba.engine.ItemSlot("heart")) }
+        enemy.recalcStats()
+        enemy.hp = enemy.maxHp
+        enemy.pos.set(ph.pos.x + 80f, ph.pos.y)
+
+        // Instant 0ms responsiveness right inside playerSmartAttack without waiting a frame
+        world.playerSmartAttack()
+        assertTrue("0ms hit must trigger attackAnimTimer immediately", ph.attackAnimTimer > 0f)
+        assertTrue("0ms hit must deal damage immediately", enemy.hp < enemy.maxHp)
+
+        val stepsSeen = mutableSetOf(ph.attackComboStep)
+        repeat(80) {
+            world.step(0.05f)
+            stepsSeen.add(ph.attackComboStep)
+        }
+        assertEquals("3-hit combo must cycle across steps 0, 1, 2", setOf(0, 1, 2), stepsSeen)
+
+        // Idle resets combo back to 0
+        ph.attackTargetId = null
+        repeat(45) { world.step(0.05f) }
+        assertEquals(0, ph.attackComboStep)
+    }
+
+    @Test
+    fun tacticalCommandsDirectAlliedBots() {
+        val world = GameWorld("juggernaut", playerTeam = Team.RADIANT, mode = GameMode.ALL_PICK_5V5)
+        val ally = world.heroes.first { it.team == Team.RADIANT && !it.isPlayer }
+        ally.pos.set(2400f, 2400f)
+        ally.hp = ally.maxHp
+        ally.mana = ally.maxMana
+
+        // ROSHAN command rallies allied bot toward Roshan pit
+        world.issueTacticalCommand(TacticalCommand.ROSHAN)
+        assertEquals(TacticalCommand.ROSHAN, world.allyCommand)
+        val dBefore = ally.pos.distTo(MapLayout.roshanPitPos)
+        repeat(20) { world.step(0.05f) }
+        assertTrue("Ally bot must move toward Roshan pit", ally.pos.distTo(MapLayout.roshanPitPos) < dBefore)
+
+        // RETREAT command sends allied bot toward fountain
+        val dFountainBefore = ally.pos.distTo(MapLayout.radiantFountain)
+        world.issueTacticalCommand(TacticalCommand.RETREAT)
+        repeat(20) { world.step(0.05f) }
+        assertTrue("RETREAT must move ally bot toward Radiant fountain", ally.pos.distTo(MapLayout.radiantFountain) < dFountainBefore)
+
+        // Killing Roshan resets ROSHAN order back to AUTO
+        world.issueTacticalCommand(TacticalCommand.ROSHAN)
+        world.applyDamage(world.roshan, 99999f, DamageType.PURE, world.playerHero)
+        assertEquals(TacticalCommand.AUTO, world.allyCommand)
+    }
+
+    @Test
+    fun enemyHeroTargetLockPrioritizesLockedHero() {
+        val world = GameWorld("juggernaut", mode = GameMode.ALL_PICK_5V5)
+        val ph = world.playerHero
+        ph.pos.set(2400f, 2400f)
+        val enemies = world.heroes.filter { it.team != ph.team }.take(2)
+        enemies[0].pos.set(2470f, 2400f)
+        enemies[0].hp = 200f // Low HP hero
+        enemies[1].pos.set(2490f, 2400f)
+        enemies[1].hp = 800f // Higher HP hero
+
+        assertTrue(world.lockEnemyHero(enemies[1].id))
+        assertEquals(enemies[1].id, ph.attackTargetId)
+
+        // Pressing ATK preserves explicitly locked enemy hero
+        world.playerSmartAttack()
+        assertEquals(enemies[1].id, ph.attackTargetId)
+    }
+
+    @Test
+    fun dotaCameraPitchLookAheadSkillshotAndShake() {
+        val world = GameWorld("pudge", mode = GameMode.SANDBOX)
+        val ph = world.playerHero
+        val cam = DotaCameraController(ph.pos.x, ph.pos.y)
+
+        // 1. Classic Dota ~60° angle + vertical console center offset
+        val restPose = cam.computePose(0f)
+        assertTrue("Camera pitch must be ~58-62 deg, was ${restPose.pitchDeg}", restPose.pitchDeg in 58f..62f)
+        assertTrue("Camera lookZ must sit south of hero so hero centers above bottom console", restPose.lookZ > ph.pos.y)
+
+        // 2. Movement look-ahead shifts toward moveIntent
+        ph.moveIntent.set(1f, 0f)
+        repeat(15) {
+            cam.update(0.03f, ph, aimActive = false, Vec2(), 0f, null, 0f)
+        }
+        assertTrue("Moving +X must build +X lookAhead", cam.lookAhead.x > 25f)
+
+        // 3. Long-range skillshot aim shifts camera toward target & adds dynamic zoom-out
+        val hookAim = Vec2(ph.pos.x + 850f, ph.pos.y)
+        repeat(20) {
+            cam.update(0.03f, ph, aimActive = true, hookAim, 860f, null, 0f)
+        }
+        assertTrue("Skillshot aim must shift camera toward target", cam.skillshotShift.x > 150f)
+
+        // 4. Camera shake adds transient jitter and decays cleanly
+        cam.addShake(0.8f)
+        cam.update(0.016f, ph, aimActive = false, Vec2(), 0f, null, 0f)
+        val shakenPose = cam.computePose(0f)
+        assertFalse(shakenPose.eyeX.isNaN())
+        repeat(40) { cam.update(0.03f, ph, aimActive = false, Vec2(), 0f, null, 0f) }
+        val settledPose = cam.computePose(0f)
+        assertTrue(kotlin.math.abs(settledPose.eyeX - settledPose.lookX) < 0.1f)
+    }
+
+    @Test
+    fun hudCustomizationBoundsStaySafe() {
+        val geo = HudGeometry()
+        val presets = listOf(
+            HudCustomization(0.75f, 0.75f, 0.80f, 0.80f, -0.05f, -0.08f, -0.06f, -0.08f),
+            HudCustomization(1.28f, 1.20f, 1.18f, 1.28f, 0.06f, 0.04f, 0.04f, 0.04f)
+        )
+        for ((w, h) in listOf(854f to 480f, 800f to 600f, 2400f to 1080f)) {
+            for (preset in presets) {
+                geo.layout(w, h, preset)
+                assertTrue(geo.joystickRestCenter.x - geo.joystickRadius >= 0f)
+                assertTrue(geo.joystickRestCenter.y + geo.joystickRadius <= h)
+                assertTrue(geo.attackCenter.x + geo.attackRadius <= w)
+                assertTrue(geo.attackCenter.y + geo.attackRadius <= h)
+                assertTrue(geo.heroConsole.left >= geo.joystickRestCenter.x + geo.joystickRadius)
+                assertTrue(geo.heroConsole.right <= geo.courierCenter.x - geo.utilRadius)
+            }
+        }
+    }
+
+    @Test
+    fun draftedRosterPopulatesWorldWithoutDuplicates() {
+        val allies = listOf("cm", "axe", "zeus", "invoker")
+        val enemies = listOf("pudge", "pa", "sniper", "earthshaker", "chronos")
+        val world = GameWorld(
+            playerHeroId = "juggernaut",
+            playerTeam = Team.RADIANT,
+            mode = GameMode.ALL_PICK_5V5,
+            draftedAllyHeroIds = allies,
+            draftedEnemyHeroIds = enemies
+        )
+        assertEquals(10, world.heroes.size)
+        assertEquals(10, world.heroes.map { it.def.id }.toSet().size)
+        val radIds = world.heroes.filter { it.team == Team.RADIANT }.map { it.def.id }.toSet()
+        val direIds = world.heroes.filter { it.team == Team.DIRE }.map { it.def.id }.toSet()
+        assertEquals((allies + "juggernaut").toSet(), radIds)
+        assertEquals(enemies.toSet(), direIds)
     }
 }

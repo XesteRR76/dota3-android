@@ -5,6 +5,7 @@ import com.dota3.moba.core.Vec2
 import com.dota3.moba.data.ItemCatalog
 import com.dota3.moba.model.BotDifficulty
 import com.dota3.moba.model.GameMode
+import com.dota3.moba.model.TacticalCommand
 import com.dota3.moba.model.TargetType
 import com.dota3.moba.model.Team
 import kotlin.random.Random
@@ -71,9 +72,11 @@ object BotAI {
         val fountain = if (hero.team == Team.RADIANT) MapLayout.radiantFountain else MapLayout.direFountain
         val enemyAncient = if (hero.team == Team.RADIANT) world.direAncient else world.radiantAncient
         val ownAncient = if (hero.team == Team.RADIANT) world.radiantAncient else world.direAncient
+        val activeCmd = if (hero.team == world.playerTeam && !hero.isPlayer) world.allyCommand else TacticalCommand.AUTO
 
-        // Healing at fountain check
-        if (hero.pos.distTo(fountain) < 380f && (hero.hp < hero.maxHp * 0.85f || hero.mana < hero.maxMana * 0.7f)) {
+        // Healing at fountain check (skip wait if ordered to PUSH/ROSHAN/DEFEND and > 65% HP)
+        val healThreshold = if (activeCmd == TacticalCommand.AUTO || activeCmd == TacticalCommand.RETREAT) 0.85f else 0.65f
+        if (hero.pos.distTo(fountain) < 380f && (hero.hp < hero.maxHp * healThreshold || hero.mana < hero.maxMana * 0.55f)) {
             hero.botRetreating = true
             hero.moveIntent.set(0f, 0f)
             return
@@ -86,21 +89,24 @@ object BotAI {
             it.alive && it.team == hero.team && it.pos.distTo(hero.pos) < 950f
         }
 
-        // Retreat if low HP or heavily outnumbered under enemy tower
+        // Retreat if ordered RETREAT, low HP, or heavily outnumbered under enemy tower
         val underEnemyTower = world.towers.any {
             it.alive && it.team != hero.team && it.pos.distTo(hero.pos) < it.attackRange + 60f &&
                 world.creeps.none { c -> c.alive && c.team == hero.team && c.pos.distTo(it.pos) < it.attackRange }
         }
+        val lowHpCut = if (activeCmd == TacticalCommand.PUSH || activeCmd == TacticalCommand.ROSHAN) 0.18f else 0.27f
 
-        if (hero.hp < hero.maxHp * 0.27f || underEnemyTower) {
+        if (activeCmd == TacticalCommand.RETREAT) {
             hero.botRetreating = true
-        } else if (hero.hp > hero.maxHp * 0.62f) {
+        } else if (hero.hp < hero.maxHp * lowHpCut || underEnemyTower) {
+            hero.botRetreating = true
+        } else if (hero.hp > hero.maxHp * 0.58f) {
             hero.botRetreating = false
         }
 
         if (hero.botRetreating) {
             // Try Blink/Phase Boots/BKB escape
-            if (enemyHeroesNear.isNotEmpty() && hero.hp < hero.maxHp * 0.35f) {
+            if (enemyHeroesNear.isNotEmpty() && hero.hp < hero.maxHp * 0.45f) {
                 world.tryUseItemById(hero, "phase_boots")
                 world.tryUseItemById(hero, "shadow_blade")
             }
@@ -111,20 +117,29 @@ object BotAI {
 
         // Check if own base is under attack!
         val baseThreat = world.heroes.firstOrNull {
-            it.alive && it.team != hero.team && !it.isInvisible() && it.pos.distTo(ownAncient.pos) < 1350f
+            it.alive && it.team != hero.team && !it.isInvisible() &&
+                it.pos.distTo(ownAncient.pos) < (if (activeCmd == TacticalCommand.DEFEND) 2100f else 1350f)
         }
+        val baseCreepThreat = if (activeCmd == TacticalCommand.DEFEND) {
+            world.creeps.filter { it.alive && it.team != hero.team && it.pos.distTo(ownAncient.pos) < 1900f }
+                .minByOrNull { it.pos.distTo(ownAncient.pos) }
+        } else null
 
-        // Decide strategic target point
-        val waypoints = MapLayout.laneWaypoints[hero.assignedLane.coerceIn(0, 2)]
+        // Decide strategic target point based on TacticalCommand or standard lane assignment
+        val pushLane = if (activeCmd == TacticalCommand.PUSH) world.playerHero.assignedLane else hero.assignedLane
+        val waypoints = MapLayout.laneWaypoints[pushLane.coerceIn(0, 2)]
         val laneIdx = if (hero.team == Team.RADIANT) {
-            // Advance along lane towards Dire, or group mid after 12 min
-            if (world.gameTime > 720f && hero.level >= 9) {
+            if (activeCmd == TacticalCommand.PUSH) {
+                world.findFurthestAllyFront(hero.team, pushLane) ?: enemyAncient.pos
+            } else if (world.gameTime > 720f && hero.level >= 9) {
                 world.findFurthestAllyFront(hero.team, 1) ?: MapLayout.laneWaypoints[1][3]
             } else {
                 world.findFurthestAllyFront(hero.team, hero.assignedLane) ?: waypoints[2]
             }
         } else {
-            if (world.gameTime > 720f && hero.level >= 9) {
+            if (activeCmd == TacticalCommand.PUSH) {
+                world.findFurthestAllyFront(hero.team, pushLane) ?: enemyAncient.pos
+            } else if (world.gameTime > 720f && hero.level >= 9) {
                 world.findFurthestAllyFront(hero.team, 1) ?: MapLayout.laneWaypoints[1][3]
             } else {
                 world.findFurthestAllyFront(hero.team, hero.assignedLane) ?: waypoints[4]
@@ -147,10 +162,13 @@ object BotAI {
         val nearOwnCreeps = world.creeps.filter { it.alive && it.team == hero.team && it.pos.distTo(hero.pos) < 620f }
         val nearEnemyTowers = world.towers.filter { it.alive && it.team != hero.team && it.pos.distTo(hero.pos) < 780f && world.isTowerVulnerable(it) }
         val nearEnemyRax = world.barracks.filter { it.alive && it.team != hero.team && it.pos.distTo(hero.pos) < 780f && world.isBarracksVulnerable(it) }
+        val roshanTarget = if (activeCmd == TacticalCommand.ROSHAN && world.roshan.alive && hero.pos.distTo(MapLayout.roshanPitPos) < 520f) {
+            world.roshan
+        } else null
 
         // Last-hit & Deny scoring
         val lastHitCreep = nearEnemyCreeps.firstOrNull { it.hp <= hero.cachedDamage * 1.15f }
-        val denyCreep = if (difficulty != BotDifficulty.EASY) {
+        val denyCreep = if (difficulty != BotDifficulty.EASY && activeCmd == TacticalCommand.AUTO) {
             nearOwnCreeps.firstOrNull { it.hp < it.maxHp * 0.48f && it.hp <= hero.cachedDamage * 1.1f }
         } else null
 
@@ -172,7 +190,13 @@ object BotAI {
 
         // Target priority
         val target: CombatUnit? = when {
+            activeCmd == TacticalCommand.ROSHAN && bestHeroTarget != null && bestHeroTarget.pos.distTo(MapLayout.roshanPitPos) < 550f -> bestHeroTarget
+            activeCmd == TacticalCommand.ROSHAN && roshanTarget != null -> roshanTarget
             baseThreat != null -> baseThreat
+            activeCmd == TacticalCommand.DEFEND && baseCreepThreat != null -> baseCreepThreat
+            activeCmd == TacticalCommand.PUSH && nearEnemyTowers.isNotEmpty() -> nearEnemyTowers.first()
+            activeCmd == TacticalCommand.PUSH && nearEnemyRax.isNotEmpty() -> nearEnemyRax.first()
+            activeCmd == TacticalCommand.PUSH && enemyAncient.pos.distTo(hero.pos) < 880f && world.isAncientVulnerable(enemyAncient.team) -> enemyAncient
             lastHitCreep != null && (bestHeroTarget == null || bestHeroTarget.hp > bestHeroTarget.maxHp * 0.35f) -> lastHitCreep
             denyCreep != null && bestHeroTarget == null -> denyCreep
             bestHeroTarget != null && (bestHeroTarget.pos.distTo(hero.pos) < 620f || bestHeroTarget.hp < bestHeroTarget.maxHp * 0.45f) -> bestHeroTarget
@@ -188,7 +212,6 @@ object BotAI {
             val desiredDist = hero.cachedAttackRange + target.radius * 0.7f
             if (d <= desiredDist + 20f) {
                 hero.attackTargetId = target.id
-                // Slight orb-walk or hold
                 hero.moveIntent.set(0f, 0f)
             } else {
                 hero.attackTargetId = target.id
@@ -196,9 +219,17 @@ object BotAI {
             }
         } else {
             hero.attackTargetId = null
-            // Check nearby Rune!
-            val nearRune = world.runes.firstOrNull { it.alive && it.pos.distTo(hero.pos) < 550f }
+            val nearRune = if (activeCmd == TacticalCommand.AUTO) {
+                world.runes.firstOrNull { it.alive && it.pos.distTo(hero.pos) < 550f }
+            } else null
+            val defendGuard = if (hero.team == Team.RADIANT) {
+                Vec2(ownAncient.pos.x + 360f, ownAncient.pos.y - 360f)
+            } else {
+                Vec2(ownAncient.pos.x - 360f, ownAncient.pos.y + 360f)
+            }
             val moveGoal = when {
+                activeCmd == TacticalCommand.ROSHAN -> MapLayout.roshanPitPos
+                activeCmd == TacticalCommand.DEFEND -> defendGuard
                 baseThreat != null -> ownAncient.pos
                 nearRune != null -> nearRune.pos
                 else -> laneIdx

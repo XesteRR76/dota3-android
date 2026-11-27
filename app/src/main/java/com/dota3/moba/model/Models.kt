@@ -49,6 +49,14 @@ enum class DamageType {
     PURE
 }
 
+enum class TacticalCommand(val label: String, val shortLabel: String, val colorHex: Int) {
+    AUTO("Auto AI", "AUTO", 0xFF94A3B8.toInt()),
+    PUSH("Push Lanes", "PUSH", 0xFF22C55E.toInt()),
+    ROSHAN("Take Roshan", "ROSH", 0xFFF59E0B.toInt()),
+    DEFEND("Defend Base", "DEF", 0xFF38BDF8.toInt()),
+    RETREAT("Retreat!", "BACK", 0xFFEF4444.toInt())
+}
+
 enum class TargetType {
     INSTANT,
     POINT_AOE,

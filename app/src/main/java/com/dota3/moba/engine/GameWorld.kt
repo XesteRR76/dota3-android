@@ -33,7 +33,9 @@ class GameWorld(
     val playerLane: Int = 1,
     val mode: GameMode = GameMode.ALL_PICK_5V5,
     val difficulty: BotDifficulty = BotDifficulty.NORMAL,
-    seed: Int = 1337
+    seed: Int = 1337,
+    val draftedAllyHeroIds: List<String> = emptyList(),
+    val draftedEnemyHeroIds: List<String> = emptyList()
 ) {
     private val rng = Random(seed)
 
@@ -47,6 +49,13 @@ class GameWorld(
     var direKills: Int = 0
     var radiantGlyphCd: Float = 0f
     var direGlyphCd: Float = 0f
+
+    var allyCommand: TacticalCommand = TacticalCommand.AUTO
+    var allyCommandTimer: Float = 0f
+
+    @Volatile var pendingCameraShake: Float = 0f
+    @Volatile var lastSkillshotAimPos: Vec2? = null
+    @Volatile var lastSkillshotHoldTimer: Float = 0f
 
     val fogOfWar = FogOfWar(128)
     val trees: MutableList<TreeNode> = MapLayout.generateTrees()
@@ -176,9 +185,13 @@ class GameWorld(
         val usedPlayerLanes = mutableListOf(playerLane)
         val allyLanes = listOf(0, 2, 1, 0, 2).toMutableList()
         allyLanes.remove(playerLane)
+        val preDraftAllies = draftedAllyHeroIds.filter { it != playerHeroId }.distinct().toMutableList()
+        preDraftAllies.forEach { pool.remove(it) }
+        val preDraftEnemies = draftedEnemyHeroIds.filter { it != playerHeroId && it !in preDraftAllies }.distinct().toMutableList()
+        preDraftEnemies.forEach { pool.remove(it) }
 
         for (i in 0 until 4) {
-            val hid = pool.removeAt(0)
+            val hid = if (preDraftAllies.isNotEmpty()) preDraftAllies.removeAt(0) else pool.removeAt(0)
             val h = HeroEntity(
                 id = "hero_ally_${allyIdx++}",
                 team = playerTeam,
@@ -194,7 +207,7 @@ class GameWorld(
 
         val enemyTeam = playerTeam.enemy()
         for (i in 0 until 5) {
-            val hid = pool.removeAt(0)
+            val hid = if (preDraftEnemies.isNotEmpty()) preDraftEnemies.removeAt(0) else pool.removeAt(0)
             val h = HeroEntity(
                 id = "hero_enemy_$i",
                 team = enemyTeam,
@@ -235,9 +248,17 @@ class GameWorld(
             }
         }
 
-        // Glyph cooldowns
+        // Glyph cooldowns & Tactical Command timers
         if (radiantGlyphCd > 0f) radiantGlyphCd = (radiantGlyphCd - dt).coerceAtLeast(0f)
         if (direGlyphCd > 0f) direGlyphCd = (direGlyphCd - dt).coerceAtLeast(0f)
+        if (lastSkillshotHoldTimer > 0f) {
+            lastSkillshotHoldTimer = (lastSkillshotHoldTimer - dt).coerceAtLeast(0f)
+            if (lastSkillshotHoldTimer <= 0f) lastSkillshotAimPos = null
+        }
+        if (allyCommand != TacticalCommand.AUTO && allyCommandTimer > 0f) {
+            allyCommandTimer = (allyCommandTimer - dt).coerceAtLeast(0f)
+            if (allyCommandTimer <= 0f) allyCommand = TacticalCommand.AUTO
+        }
 
         // Tree respawn
         for (t in trees) {
@@ -496,6 +517,10 @@ class GameWorld(
         // Cooldowns & Statuses
         tickUnitStatuses(h, dt)
         if (h.attackAnimTimer > 0f) h.attackAnimTimer = (h.attackAnimTimer - dt).coerceAtLeast(0f)
+        if (h.attackComboResetTimer > 0f) {
+            h.attackComboResetTimer = (h.attackComboResetTimer - dt).coerceAtLeast(0f)
+            if (h.attackComboResetTimer <= 0f) h.attackComboStep = 0
+        }
         if (h.castAnimTimer > 0f) h.castAnimTimer = (h.castAnimTimer - dt).coerceAtLeast(0f)
         h.attackCommandAge += dt
         if (abs(h.moveIntent.x) > 0.05f || abs(h.moveIntent.y) > 0.05f || h.tapMoveTarget != null) {
@@ -805,8 +830,10 @@ class GameWorld(
         if (h.attackCooldown > 0f) return
         h.facingAngle = h.pos.angleTo(target.pos)
         h.attackCooldown = h.def.baseAttackTime / (h.cachedAttackSpeed / 100f)
-        h.attackAnimDuration = minOf(0.32f, h.attackCooldown * 0.7f).coerceAtLeast(0.18f)
+        h.attackAnimDuration = minOf(0.34f, h.attackCooldown * 0.72f).coerceAtLeast(0.20f)
         h.attackAnimTimer = h.attackAnimDuration
+        h.attackComboStep = (h.attackComboStep + 1) % 3
+        h.attackComboResetTimer = 1.9f
 
         // Breaking invisibility on attack (Shadow Blade bonus!)
         var bonusBackstab = 0f
@@ -843,7 +870,7 @@ class GameWorld(
             }
         }
 
-        // Crit roll
+        // Crit roll (every 3rd combo finisher gets +8% bonus crit intuition too!)
         var isCrit = false
         if (h.cachedCritChance > 0f && target !is TowerEntity && target !is AncientEntity && target !is BarracksEntity) {
             if (rng.nextFloat() < h.cachedCritChance) {
@@ -851,6 +878,7 @@ class GameWorld(
                 isCrit = true
             }
         }
+        h.lastHitWasCrit = isCrit
 
         if (h.def.isRanged) {
             projectiles.add(
@@ -870,7 +898,7 @@ class GameWorld(
             if (h.isPlayer) SoundEngine.play(SoundCue.ATTACK_RANGED)
         } else {
             resolvePhysicalAttackHit(h, target, dmg, isCrit)
-            if (h.isPlayer) SoundEngine.play(SoundCue.ATTACK_MELEE)
+            if (h.isPlayer && !isCrit) SoundEngine.play(SoundCue.ATTACK_MELEE)
         }
     }
 
@@ -892,9 +920,13 @@ class GameWorld(
         val dealt = applyDamage(target, rawDmg, DamageType.PHYSICAL, attacker, showFloat = !isCrit)
         if (isCrit) {
             addFloatingText(target.pos, "CRIT ${dealt.toInt()}!", 0xFFFF4D4D.toInt(), life = 1.15f, scale = 1.65f)
-            spawnParticles(target.pos, 0xFFEF4444.toInt(), 12, 95f)
+            spawnParticles(target.pos, 0xFFEF4444.toInt(), 14, 115f)
+            if (attacker.isPlayer) {
+                SoundEngine.play(SoundCue.CRIT_HIT)
+                pendingCameraShake = (pendingCameraShake + 0.40f).coerceAtMost(1.0f)
+            }
         } else if (attacker.isPlayer || (target is HeroEntity && target.isPlayer)) {
-            spawnParticles(target.pos, 0xFFFDE047.toInt(), 4, 48f)
+            spawnParticles(target.pos, 0xFFFDE047.toInt(), 7, 65f)
         }
 
         // Lifesteal
@@ -1294,6 +1326,10 @@ class GameWorld(
                 iter.remove()
                 continue
             }
+            if (p.trail.isEmpty() || p.trail.first().distTo(p.pos) >= 16f) {
+                p.trail.add(0, p.pos.copyVec())
+                if (p.trail.size > 6) p.trail.removeAt(p.trail.lastIndex)
+            }
             if (p.isSkillshot) {
                 val step = p.velocity * dt
                 p.pos.x += step.x
@@ -1472,6 +1508,10 @@ class GameWorld(
             p.life -= dt
             p.pos.x += p.vel.x * dt
             p.pos.y += p.vel.y * dt
+            if (!p.ring) {
+                p.height = (p.height + p.zVel * dt).coerceAtLeast(2f)
+                p.zVel -= 420f * dt
+            }
             if (p.life <= 0f) pIter.remove()
         }
         val tIter = floatingTexts.iterator()
@@ -1565,6 +1605,13 @@ class GameWorld(
 
         if (hero.isPlayer) {
             SoundEngine.play(if (ab.isUltimate) SoundCue.ULTIMATE else SoundCue.SPELL_CAST)
+            if (ab.isUltimate) {
+                pendingCameraShake = (pendingCameraShake + 0.65f).coerceAtMost(1.0f)
+            }
+            if (ab.castRange >= 720f && (ab.targetType == TargetType.DIRECTION_SKILLSHOT || ab.targetType == TargetType.POINT_AOE)) {
+                lastSkillshotAimPos = clampPoint(hero.pos, aimPoint, ab.castRange)
+                lastSkillshotHoldTimer = 0.60f
+            }
         }
 
         when (ab.id) {
@@ -2165,11 +2212,17 @@ class GameWorld(
     fun effectiveItemCost(hero: HeroEntity, def: ItemDef): Int {
         var cost = def.cost
         val allOwned = (hero.inventory + hero.stash).map { it.itemId }.toMutableList()
-        for (compId in def.components) {
-            if (allOwned.remove(compId)) {
-                cost -= ItemCatalog.get(compId)?.cost ?: 0
+        fun deduct(compIds: List<String>) {
+            for (compId in compIds) {
+                val compDef = ItemCatalog.get(compId) ?: continue
+                if (allOwned.remove(compId)) {
+                    cost -= compDef.cost
+                } else if (compDef.components.isNotEmpty()) {
+                    deduct(compDef.components)
+                }
             }
         }
+        deduct(def.components)
         return cost.coerceAtLeast(0)
     }
 
@@ -2190,18 +2243,28 @@ class GameWorld(
         }
 
         val atFountain = hero.pos.distTo(fountainPos(hero.team)) < 480f
-        // Snapshot & remove consumed components, rolling back if inventory+stash have no space
+        // Snapshot & remove consumed components (supports nested sub-components!), rolling back if no space
         val removedFromInv = mutableListOf<ItemSlot>()
         val removedFromStash = mutableListOf<ItemSlot>()
-        for (compId in def.components) {
-            val invIdx = hero.inventory.indexOfFirst { it.itemId == compId }
-            if (invIdx >= 0) {
-                removedFromInv.add(hero.inventory.removeAt(invIdx))
-            } else {
-                val stIdx = hero.stash.indexOfFirst { it.itemId == compId }
-                if (stIdx >= 0) removedFromStash.add(hero.stash.removeAt(stIdx))
+        fun consumeComponents(compIds: List<String>) {
+            for (compId in compIds) {
+                val invIdx = hero.inventory.indexOfFirst { it.itemId == compId }
+                if (invIdx >= 0) {
+                    removedFromInv.add(hero.inventory.removeAt(invIdx))
+                } else {
+                    val stIdx = hero.stash.indexOfFirst { it.itemId == compId }
+                    if (stIdx >= 0) {
+                        removedFromStash.add(hero.stash.removeAt(stIdx))
+                    } else {
+                        val compDef = ItemCatalog.get(compId)
+                        if (compDef != null && compDef.components.isNotEmpty()) {
+                            consumeComponents(compDef.components)
+                        }
+                    }
+                }
             }
         }
+        consumeComponents(def.components)
 
         val newSlot = ItemSlot(itemId, stacks = 1, charges = if (itemId == "magic_wand") 3 else 0)
         hero.gold -= price
@@ -2358,16 +2421,19 @@ class GameWorld(
                     killer.killStreak++
 
                     var bounty = 180 + victim.level * 16 + victim.killStreak * 30
+                    var playedFirstBlood = false
                     if (!firstBloodClaimed) {
                         firstBloodClaimed = true
                         bounty += 135
                         addAnnouncement("FIRST BLOOD!", "${killer.def.name} drew first blood!", 0xFFE74C3C.toInt())
+                        SoundEngine.play(SoundCue.FIRST_BLOOD)
+                        playedFirstBlood = true
                     }
                     bounty = (bounty * mode.goldMult).toInt()
                     killer.gold += bounty
                     killer.reliableGold += bounty
                     killer.totalGoldEarned += bounty
-                    if (killer.isPlayer) SoundEngine.play(SoundCue.HERO_KILL)
+                    if (killer.isPlayer && !playedFirstBlood) SoundEngine.play(SoundCue.HERO_KILL)
                     addFloatingText(victim.pos, "+${bounty}g", 0xFFF1C40F.toInt(), scale = 1.3f)
 
                     // Desolator & PA Scepter & Axe & Pudge stacks
@@ -2407,7 +2473,12 @@ class GameWorld(
                         9 -> "GODLIKE!"
                         else -> if (killer.killStreak >= 10) "BEYOND GODLIKE!!" else null
                     }
-                    if (ksTitle != null) addAnnouncement(ksTitle, "${killer.def.name} (${killer.kills}/${killer.deaths})", 0xFFF39C12.toInt())
+                    if (ksTitle != null) {
+                        addAnnouncement(ksTitle, "${killer.def.name} (${killer.kills}/${killer.deaths})", 0xFFF39C12.toInt())
+                        if (killer.isPlayer) {
+                            SoundEngine.play(if (killer.killStreak >= 6) SoundCue.GODLIKE else SoundCue.KILL_SPREE)
+                        }
+                    }
 
                     // 1v1 Mid win check (2 kills wins!)
                     if (mode == GameMode.MID_1V1 && killer.kills >= 2) {
@@ -2486,6 +2557,8 @@ class GameWorld(
                 }
                 addAnnouncement("${victim.team.name} TOWER FALLEN!", "Tier ${victim.blueprint.tier} destroyed (+${teamGold}g team)", 0xFFF39C12.toInt())
                 spawnParticles(victim.pos, 0xFFFF9800.toInt(), 32, 180f, ring = true)
+                SoundEngine.play(SoundCue.TOWER_DESTROY)
+                pendingCameraShake = (pendingCameraShake + 0.50f).coerceAtMost(1.0f)
                 if (mode == GameMode.MID_1V1) {
                     endMatch(rewardTeam, "Enemy Mid Tower Destroyed!")
                 }
@@ -2515,6 +2588,11 @@ class GameWorld(
                 }
                 addAnnouncement("ROSHAN HAS FALLEN!", "Aegis of the Immortal dropped!", 0xFFFFD700.toInt())
                 SoundEngine.play(SoundCue.ROSHAN_ROAR)
+                pendingCameraShake = (pendingCameraShake + 0.65f).coerceAtMost(1.0f)
+                if (allyCommand == TacticalCommand.ROSHAN) {
+                    allyCommand = TacticalCommand.AUTO
+                    allyCommandTimer = 0f
+                }
             }
             is TormentorEntity -> {
                 victim.alive = false
@@ -2704,6 +2782,10 @@ class GameWorld(
 
     private fun findBestEnemyTarget(caster: HeroEntity, aimPoint: Vec2, targetUnitId: String?, range: Float): CombatUnit? {
         findUnitById(targetUnitId)?.takeIf { it.alive && it.team != caster.team && it.pos.distTo(caster.pos) <= range + 80f }?.let { return it }
+        findUnitById(caster.attackTargetId)?.takeIf {
+            it is HeroEntity && it.alive && it.team != caster.team && it.pos.distTo(caster.pos) <= range + 80f &&
+                (!it.isInvisible() || fogOfWar.hasTrueSight(it.pos.x, it.pos.y))
+        }?.let { return it }
         val nearAim = allEnemyUnits(caster.team, aimPoint, 240f).filter { it.pos.distTo(caster.pos) <= range + 80f && !it.isInvisible() }
         if (nearAim.isNotEmpty()) {
             return nearAim.filterIsInstance<HeroEntity>().minByOrNull { it.pos.distTo(aimPoint) } ?: nearAim.minByOrNull { it.pos.distTo(aimPoint) }
@@ -2753,11 +2835,18 @@ class GameWorld(
     }
 
     fun spawnParticles(pos: Vec2, color: Int, count: Int, spread: Float, ring: Boolean = false) {
-        if (particles.size > 260) return
+        if (particles.size > 280) return
         for (i in 0 until count) {
             val ang = (i.toFloat() / count) * 6.283f + rng.nextFloat() * 0.4f
-            val spd = if (ring) spread * 1.4f else rng.nextFloat() * spread * 1.3f
-            particles.add(ParticleEffect(pos.copyVec(), Vec2.fromAngle(ang, spd), color, if (ring) 7f else 5f, 0.35f, 0.35f, ring))
+            val spd = if (ring) spread * 1.4f else rng.nextFloat() * spread * 1.35f
+            val zv = if (ring) 0f else 65f + rng.nextFloat() * 145f
+            particles.add(
+                ParticleEffect(
+                    pos.copyVec(), Vec2.fromAngle(ang, spd), color,
+                    if (ring) 7.5f else 5.5f, 0.36f, 0.36f, ring,
+                    height = if (ring) 5f else 22f + rng.nextFloat() * 14f, zVel = zv
+                )
+            )
         }
     }
 
@@ -2769,6 +2858,48 @@ class GameWorld(
     fun addAnnouncement(title: String, subtitle: String, color: Int, duration: Float = 3.0f) {
         announcements.add(MatchAnnouncement(title, subtitle, color, duration))
         if (announcements.size > 3) announcements.removeAt(0)
+    }
+
+    fun issueTacticalCommand(cmd: TacticalCommand) {
+        allyCommand = cmd
+        allyCommandTimer = if (cmd == TacticalCommand.AUTO) 0f else 32f
+        val pingPos = when (cmd) {
+            TacticalCommand.PUSH -> findFurthestAllyFront(playerTeam, playerHero.assignedLane)
+                ?: if (playerTeam == Team.RADIANT) direAncient.pos else radiantAncient.pos
+            TacticalCommand.ROSHAN -> MapLayout.roshanPitPos
+            TacticalCommand.DEFEND -> if (playerTeam == Team.RADIANT) radiantAncient.pos else direAncient.pos
+            TacticalCommand.RETREAT -> fountainPos(playerTeam)
+            TacticalCommand.AUTO -> playerHero.pos
+        }
+        addPing(pingPos, cmd.colorHex)
+        val msg = when (cmd) {
+            TacticalCommand.PUSH -> "ALLIES: PUSH!"
+            TacticalCommand.ROSHAN -> if (roshan.alive) "ALLIES: TAKE ROSHAN!" else "ROSHAN DEAD (${roshan.respawnTimer.toInt()}s)"
+            TacticalCommand.DEFEND -> "ALLIES: DEFEND BASE!"
+            TacticalCommand.RETREAT -> "ALLIES: RETREAT!"
+            TacticalCommand.AUTO -> "ALLIES: AUTO AI"
+        }
+        addFloatingText(playerHero.pos, msg, cmd.colorHex, 1.4f, 1.15f)
+        SoundEngine.play(SoundCue.TACTICAL_PING)
+    }
+
+    fun lockEnemyHero(heroId: String): Boolean {
+        val h = playerHero
+        if (!h.alive) return false
+        val target = heroes.firstOrNull {
+            it.id == heroId && it.alive && it.team != playerTeam &&
+                (!it.isInvisible() || fogOfWar.hasTrueSight(it.pos.x, it.pos.y))
+        } ?: return false
+        h.attackTargetId = target.id
+        h.attackCommandAge = 0f
+        h.facingAngle = h.pos.angleTo(target.pos)
+        if (target.pos.distTo(h.pos) > h.cachedAttackRange) {
+            h.tapMoveTarget = target.pos.copyVec()
+        } else if (!h.isStunned() && !h.isDisarmed() && h.omnislashTimer <= 0f && h.dismemberTimer <= 0f && h.freezingFieldTimer <= 0f) {
+            performHeroAutoAttack(h)
+        }
+        spawnParticles(target.pos, 0xFFEF4444.toInt(), 8, 55f, ring = true)
+        return true
     }
 
     // Smart Attack helpers for MLBB-style buttons (Hero / Creep / Tower-or-Deny)
@@ -2789,6 +2920,7 @@ class GameWorld(
                 h.attackCommandAge = 0f
                 h.facingAngle = h.pos.angleTo(denyCreep.pos)
                 if (denyCreep.pos.distTo(h.pos) > h.cachedAttackRange) h.tapMoveTarget = denyCreep.pos.copyVec()
+                else if (!h.isStunned() && !h.isDisarmed()) performHeroAutoAttack(h)
                 return
             }
             val denyTower = towers.filter { it.alive && it.team == h.team && it.hp < it.maxHp * 0.1f && it.pos.distTo(h.pos) <= searchR }
@@ -2797,11 +2929,15 @@ class GameWorld(
                 h.attackTargetId = denyTower.id
                 h.attackCommandAge = 0f
                 h.facingAngle = h.pos.angleTo(denyTower.pos)
+                if (!h.isStunned() && !h.isDisarmed()) performHeroAutoAttack(h)
                 return
             }
         }
         val enemies = allEnemyUnits(h.team, h.pos, searchR).filter { !it.isInvisible() || fogOfWar.hasTrueSight(it.pos.x, it.pos.y) }
-        val target = when {
+        val lockedHero = if (!preferCreep && !preferStructure) {
+            enemies.filterIsInstance<HeroEntity>().firstOrNull { it.id == h.attackTargetId }
+        } else null
+        val target = lockedHero ?: when {
             preferStructure -> {
                 enemies.filter { it is TowerEntity || it is BarracksEntity || it is AncientEntity }.minByOrNull { it.pos.distTo(h.pos) }
                     ?: enemies.minByOrNull { it.pos.distTo(h.pos) }
@@ -2819,7 +2955,12 @@ class GameWorld(
             h.attackTargetId = target.id
             h.attackCommandAge = 0f
             h.facingAngle = h.pos.angleTo(target.pos)
-            if (target.pos.distTo(h.pos) > h.cachedAttackRange) h.tapMoveTarget = target.pos.copyVec()
+            if (target.pos.distTo(h.pos) > h.cachedAttackRange) {
+                h.tapMoveTarget = target.pos.copyVec()
+            } else if (!h.isStunned() && !h.isDisarmed() && h.omnislashTimer <= 0f && h.dismemberTimer <= 0f && h.freezingFieldTimer <= 0f) {
+                // Instant 0ms MLBB hit responsiveness!
+                performHeroAutoAttack(h)
+            }
         } else if (!silentNoTarget) {
             if (h.attackAnimTimer <= 0f) {
                 h.attackAnimDuration = 0.22f

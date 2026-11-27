@@ -45,6 +45,9 @@ abstract class CombatUnit(
     var recentDamageTimer: Float = 0f
     var attackAnimTimer: Float = 0f
     var attackAnimDuration: Float = 0.30f
+    var attackComboStep: Int = 0
+    var attackComboResetTimer: Float = 0f
+    var lastHitWasCrit: Boolean = false
     var walkCycle: Float = 0f
     val statuses: MutableList<ActiveStatus> = mutableListOf()
 
@@ -117,7 +120,7 @@ class HeroEntity(
     var hasScepter: Boolean = false
     var hasShard: Boolean = false
 
-    // Items: 6 inventory + 3 backpack + stash + neutral + TP
+    // Items: 6 inventory + stash + neutral + TP (fast Dota 3 pacing: no backpack/secret shop travel)
     val inventory: MutableList<ItemSlot> = mutableListOf()
     val stash: MutableList<ItemSlot> = mutableListOf()
     var neutralItemId: String? = null
@@ -684,6 +687,7 @@ class Projectile(
     val stunDur: Float = 0f,
     val slowDur: Float = 0f,
     val hitIds: MutableSet<String> = HashSet(),
+    val trail: MutableList<Vec2> = mutableListOf(),
     var alive: Boolean = true
 )
 
@@ -711,7 +715,9 @@ class ParticleEffect(
     var size: Float,
     var life: Float,
     val maxLife: Float,
-    val ring: Boolean = false
+    val ring: Boolean = false,
+    var height: Float = 26f,
+    var zVel: Float = 0f
 )
 
 class FloatingText(
