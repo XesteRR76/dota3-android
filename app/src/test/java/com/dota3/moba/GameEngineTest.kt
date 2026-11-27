@@ -138,17 +138,18 @@ class GameEngineTest {
         assertTrue(world.chooseTalent(ph, 0, 0))
         assertTrue(world.chooseTalent(ph, 3, 1))
 
-        // Buy Divine Rapier and die -> drops on map!
+        // Buy Divine Rapier, move to river center, and die -> drops on map!
         ph.gold = 10000
         assertTrue(world.buyItem(ph, "divine_rapier"))
         assertTrue(ph.hasItem("divine_rapier"))
+        ph.pos.set(2400f, 2400f)
         val enemy = world.heroes.first { it.team != ph.team }
         world.applyDamage(ph, 99999f, DamageType.PURE, enemy)
         assertFalse(ph.alive)
         assertTrue(world.droppedItems.any { it.itemId == "divine_rapier" })
 
         // Enemy walks over dropped rapier -> claims it!
-        enemy.pos.set(ph.pos.x, ph.pos.y)
+        enemy.pos.set(2400f, 2400f)
         world.step(0.05f)
         assertTrue(enemy.hasItem("divine_rapier"))
 
