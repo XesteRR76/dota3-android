@@ -128,4 +128,34 @@ class GameEngineTest {
         // Fog of War sees player
         assertTrue(world.fogOfWar.isVisible(ph.pos.x, ph.pos.y))
     }
+
+    @Test
+    fun divineRapierDropAndTalentsAndTwinGate() {
+        val world = GameWorld("chronos", mode = GameMode.ALL_PICK_5V5)
+        val ph = world.playerHero
+        ph.addXp(25000) // Level 25+
+        assertNotNull(ph.availableTalentTier())
+        assertTrue(world.chooseTalent(ph, 0, 0))
+        assertTrue(world.chooseTalent(ph, 3, 1))
+
+        // Buy Divine Rapier and die -> drops on map!
+        ph.gold = 10000
+        assertTrue(world.buyItem(ph, "divine_rapier"))
+        assertTrue(ph.hasItem("divine_rapier"))
+        val enemy = world.heroes.first { it.team != ph.team }
+        world.applyDamage(ph, 99999f, DamageType.PURE, enemy)
+        assertFalse(ph.alive)
+        assertTrue(world.droppedItems.any { it.itemId == "divine_rapier" })
+
+        // Enemy walks over dropped rapier -> claims it!
+        enemy.pos.set(ph.pos.x, ph.pos.y)
+        world.step(0.05f)
+        assertTrue(enemy.hasItem("divine_rapier"))
+
+        // Twin Gate teleportation
+        enemy.tpCooldown = 0f
+        enemy.pos.set(com.dota3.moba.engine.MapLayout.twinGateTopLeft.x, com.dota3.moba.engine.MapLayout.twinGateTopLeft.y)
+        world.step(0.05f)
+        assertTrue(enemy.pos.x > 4000f && enemy.pos.y > 4000f)
+    }
 }

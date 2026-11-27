@@ -501,6 +501,31 @@ class GameRenderer {
             linePaint.strokeCap = Paint.Cap.ROUND
             canvas.drawLine(h.pos.x, h.pos.y, wx, wy, linePaint)
 
+            // Signature Hero Details (Invoker Q/W/E orbs, Chronos rings, Jugg spin)
+            if (h.def.id == "invoker") {
+                val orbColors = intArrayOf(0xFF38BDF8.toInt(), 0xFFA855F7.toInt(), 0xFFFF9800.toInt())
+                for (oi in 0..2) {
+                    val ang = world.gameTime * 3.2f + oi * 2.094f
+                    paint.style = Paint.Style.FILL
+                    paint.color = orbColors[oi]
+                    canvas.drawCircle(h.pos.x + cos(ang) * 38f, h.pos.y + sin(ang) * 38f, 6.5f, paint)
+                }
+            } else if (h.def.id == "chronos") {
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 2.5f
+                paint.color = 0xAAFFD700.toInt()
+                canvas.drawCircle(h.pos.x, h.pos.y, h.radius + 14f, paint)
+            }
+            if (h.hasStatus(StatusType.BLADE_FURY)) {
+                val spinAng = world.gameTime * 14f
+                linePaint.color = 0xFFF39C12.toInt()
+                linePaint.strokeWidth = 4f
+                canvas.drawLine(
+                    h.pos.x - cos(spinAng) * 55f, h.pos.y - sin(spinAng) * 55f,
+                    h.pos.x + cos(spinAng) * 55f, h.pos.y + sin(spinAng) * 55f, linePaint
+                )
+            }
+
             // Dota-style HP + Mana + Level badge
             val barCol = if (h.isPlayer) 0xFF2ECC71.toInt() else if (isAlly) 0xFF3498DB.toInt() else 0xFFE74C3C.toInt()
             drawHealthBar(canvas, h.pos.x, h.pos.y - h.radius - 20f, 68f, 8f, h.hp, h.maxHp, barCol, 250f)
@@ -546,6 +571,14 @@ class GameRenderer {
 
     private fun drawProjectilesAndFx(canvas: Canvas, world: GameWorld) {
         for (p in world.projectiles) {
+            if (p.kind == "hook") {
+                val shooter = world.heroes.firstOrNull { it.id == p.sourceId }
+                if (shooter != null) {
+                    linePaint.color = 0xFFC0392B.toInt()
+                    linePaint.strokeWidth = 5f
+                    canvas.drawLine(shooter.pos.x, shooter.pos.y, p.pos.x, p.pos.y, linePaint)
+                }
+            }
             paint.style = Paint.Style.FILL
             paint.color = p.color
             canvas.drawCircle(p.pos.x, p.pos.y, p.radius.coerceAtMost(18f), paint)
@@ -605,7 +638,7 @@ class GameRenderer {
 
     private fun drawHud(canvas: Canvas, world: GameWorld, w: Float, h: Float) {
         // 1. Minimap
-        drawMinimap(canvas, world)
+        drawMinimap(canvas, world, w, h)
 
         // 2. Top Score & Clock Bar
         val topW = w * 0.34f
@@ -766,9 +799,66 @@ class GameRenderer {
             textPaint.textSize = h * 0.026f
             canvas.drawText(ann.subtitle, w * 0.5f, h * 0.25f, textPaint)
         }
+
+        // 11. Bottom-Center Dota Hero Status Plate (HP / MP / XP / Stats / Scepter / Aegis)
+        val plateLeft = hud.glyphBtnRect.right + w * 0.015f
+        val plateRight = hud.abilityRects[0].left - w * 0.015f
+        if (plateRight - plateLeft > 120f) {
+            val plateTop = h - h * 0.125f
+            val plateBot = h - 8f
+            paint.style = Paint.Style.FILL
+            paint.color = 0xCC0D1320.toInt()
+            rectF.set(plateLeft, plateTop, plateRight, plateBot)
+            canvas.drawRoundRect(rectF, 10f, 10f, paint)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 2f
+            paint.color = 0xFF334155.toInt()
+            canvas.drawRoundRect(rectF, 10f, 10f, paint)
+
+            val padX = 10f
+            val innerW = (plateRight - plateLeft) - padX * 2f
+            val rowH = (plateBot - plateTop - 12f) / 3f
+
+            // Top line: Lv + Stats + Scepter/Shard/Aegis tags
+            textPaint.textAlign = Paint.Align.LEFT
+            textPaint.textSize = (rowH * 0.62f).coerceIn(11f, 16f)
+            textPaint.color = 0xFFF5B041.toInt()
+            val tags = buildString {
+                append("Lv${ph.level}  DMG:${ph.cachedDamage.toInt()}  ARM:${ph.armor.toInt()}  MS:${ph.cachedMoveSpeed.toInt()}")
+                if (ph.hasScepter) append("  [AGH]")
+                if (ph.hasShard) append("  [SHD]")
+                if (ph.hasAegis) append("  [AEGIS]")
+            }
+            canvas.drawText(tags, plateLeft + padX, plateTop + rowH * 0.72f, textPaint)
+
+            // HP Bar
+            val hpY = plateTop + rowH + 3f
+            val hpPct = (ph.hp / ph.maxHp.coerceAtLeast(1f)).coerceIn(0f, 1f)
+            paint.style = Paint.Style.FILL
+            paint.color = 0xFF14291E.toInt()
+            canvas.drawRect(plateLeft + padX, hpY, plateLeft + padX + innerW, hpY + rowH * 0.8f, paint)
+            paint.color = 0xFF22C55E.toInt()
+            canvas.drawRect(plateLeft + padX, hpY, plateLeft + padX + innerW * hpPct, hpY + rowH * 0.8f, paint)
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.color = Color.WHITE
+            textPaint.textSize = (rowH * 0.56f).coerceIn(10f, 15f)
+            canvas.drawText("${ph.hp.toInt()} / ${ph.maxHp.toInt()}  (+${"%.1f".format(ph.cachedHpRegen)})",
+                plateLeft + padX + innerW * 0.5f, hpY + rowH * 0.62f, textPaint)
+
+            // Mana Bar
+            val mpY = hpY + rowH + 2f
+            val mpPct = (ph.mana / ph.maxMana.coerceAtLeast(1f)).coerceIn(0f, 1f)
+            paint.color = 0xFF112238.toInt()
+            canvas.drawRect(plateLeft + padX, mpY, plateLeft + padX + innerW, mpY + rowH * 0.8f, paint)
+            paint.color = 0xFF38BDF8.toInt()
+            canvas.drawRect(plateLeft + padX, mpY, plateLeft + padX + innerW * mpPct, mpY + rowH * 0.8f, paint)
+            textPaint.color = Color.WHITE
+            canvas.drawText("${ph.mana.toInt()} / ${ph.maxMana.toInt()}  (+${"%.1f".format(ph.cachedManaRegen)})",
+                plateLeft + padX + innerW * 0.5f, mpY + rowH * 0.62f, textPaint)
+        }
     }
 
-    private fun drawMinimap(canvas: Canvas, world: GameWorld) {
+    private fun drawMinimap(canvas: Canvas, world: GameWorld, w: Float, h: Float) {
         val mm = hud.minimapRect
         paint.style = Paint.Style.FILL
         paint.color = 0xEE0B0F17.toInt()
@@ -812,6 +902,22 @@ class GameRenderer {
             paint.color = pg.color
             canvas.drawCircle(mm.left + pg.pos.x * sx, mm.top + pg.pos.y * sy, 8f, paint)
         }
+
+        // Camera Viewport Rectangle on Minimap
+        val halfVw = (w * 0.5f / zoom) * sx
+        val halfVh = (h * 0.5f / zoom) * sy
+        val camCx = mm.left + cameraPos.x * sx
+        val camCy = mm.top + cameraPos.y * sy
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1.5f
+        paint.color = 0xCCFFFFFF.toInt()
+        canvas.drawRect(
+            (camCx - halfVw).coerceIn(mm.left, mm.right),
+            (camCy - halfVh).coerceIn(mm.top, mm.bottom),
+            (camCx + halfVw).coerceIn(mm.left, mm.right),
+            (camCy + halfVh).coerceIn(mm.top, mm.bottom),
+            paint
+        )
 
         // Minimap border
         paint.style = Paint.Style.STROKE
