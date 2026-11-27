@@ -195,15 +195,18 @@ object MapLayout {
         val trees = mutableListOf<TreeNode>()
         var nextId = 1
 
-        fun addCluster(cx: Float, cy: Float, cols: Int, rows: Int, spacing: Float = 66f) {
+        fun addCluster(cx: Float, cy: Float, cols: Int, rows: Int, spacing: Float = 68f) {
             for (r in 0 until rows) {
                 for (c in 0 until cols) {
-                    val jitterX = (((nextId * 37) % 23) - 11).toFloat()
-                    val jitterY = (((nextId * 53) % 23) - 11).toFloat()
-                    val tx = cx + (c - cols / 2f) * spacing + ((r % 2) * 20f) + jitterX
+                    val hash = (nextId * 1103515245 + 12345) ushr 16
+                    nextId++
+                    if (cols >= 3 && rows >= 3 && (hash % 7 == 0)) continue
+                    val jitterX = ((hash % 37) - 18).toFloat()
+                    val jitterY = (((hash / 37) % 37) - 18).toFloat()
+                    val tx = cx + (c - cols / 2f) * spacing + ((r % 2) * 24f) + jitterX
                     val ty = cy + (r - rows / 2f) * spacing + jitterY
                     if (isValidTreeSpot(tx, ty)) {
-                        trees.add(TreeNode(nextId++, Vec2(tx, ty)))
+                        trees.add(TreeNode(nextId, Vec2(tx, ty)))
                     }
                 }
             }

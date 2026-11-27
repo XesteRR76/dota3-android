@@ -36,6 +36,7 @@ class HudGeometry {
     val talentBtn = BoxBounds()
     val statsBtn = BoxBounds()
     val pauseBtn = BoxBounds()
+    val topHeader = BoxBounds()
 
     // Authentic Dota 2 Bottom Hero Console
     val heroConsole = BoxBounds()
@@ -72,44 +73,50 @@ class HudGeometry {
     var joystickRadius = 64f
 
     fun layout(w: Float, h: Float) {
-        val pad = (w * 0.012f).coerceIn(12f, 28f)
-        val mmSize = (h * 0.235f).coerceIn(112f, 224f)
+        val pad = (w * 0.011f).coerceIn(10f, 26f)
+        val mmSize = (h * 0.232f).coerceIn(108f, 240f)
         minimap.set(pad, pad, pad + mmSize, pad + mmSize)
-        val camH = (h * 0.042f).coerceIn(24f, 44f)
-        camBtn.set(pad, minimap.bottom + 6f, pad + mmSize * 0.62f, minimap.bottom + 6f + camH)
-        zoomBtn.set(camBtn.right + 5f, minimap.bottom + 6f, pad + mmSize, minimap.bottom + 6f + camH)
+        val camH = (h * 0.044f).coerceIn(24f, 48f)
+        camBtn.set(pad, minimap.bottom + 5f, pad + mmSize * 0.61f, minimap.bottom + 5f + camH)
+        zoomBtn.set(camBtn.right + 5f, minimap.bottom + 5f, pad + mmSize, minimap.bottom + 5f + camH)
 
         // 2 MLBB Quick-Buy Item Cards cleanly beside Minimap
-        val qbLeft = minimap.right + 10f
-        val qbW = (w * 0.115f).coerceIn(112f, 230f)
-        val qbH = (h * 0.056f).coerceIn(32f, 58f)
+        val qbLeft = minimap.right + 8f
+        val qbW = (w * 0.112f).coerceIn(104f, 224f)
+        val qbH = (h * 0.056f).coerceIn(30f, 60f)
         quickBuy[0].set(qbLeft, pad, qbLeft + qbW, pad + qbH)
-        quickBuy[1].set(qbLeft, pad + qbH + 6f, qbLeft + qbW, pad + qbH * 2f + 6f)
+        quickBuy[1].set(qbLeft, pad + qbH + 5f, qbLeft + qbW, pad + qbH * 2f + 5f)
 
         // Top Right Menu Buttons
-        val btnW = (w * 0.072f).coerceIn(66f, 136f)
-        val btnH = (h * 0.060f).coerceIn(34f, 58f)
+        val btnW = (w * 0.068f).coerceIn(62f, 134f)
+        val btnH = (h * 0.058f).coerceIn(32f, 60f)
         pauseBtn.set(w - pad - btnW * 0.85f, pad, w - pad, pad + btnH)
-        statsBtn.set(pauseBtn.left - 8f - btnW, pad, pauseBtn.left - 8f, pad + btnH)
-        talentBtn.set(statsBtn.left - 8f - btnW * 1.1f, pad, statsBtn.left - 8f, pad + btnH)
-        shopBtn.set(talentBtn.left - 8f - btnW * 1.35f, pad, talentBtn.left - 8f, pad + btnH)
+        statsBtn.set(pauseBtn.left - 6f - btnW, pad, pauseBtn.left - 6f, pad + btnH)
+        talentBtn.set(statsBtn.left - 6f - btnW * 1.12f, pad, statsBtn.left - 6f, pad + btnH)
+        shopBtn.set(talentBtn.left - 6f - btnW * 1.32f, pad, talentBtn.left - 6f, pad + btnH)
 
-        // MLBB Ergonomic Right-Thumb Fan (reachable arc from Q at 188° to R at 266°)
-        attackRadius = (h * 0.078f).coerceIn(45f, 88f)
-        attackCenter.set(w - pad - attackRadius * 1.15f, h - pad - attackRadius * 1.15f)
+        // Top Center Score & Clock Header (guaranteed clear of Quick-Buy & Shop)
+        val centerClearHalf = minOf(w * 0.5f - (quickBuy[0].right + 8f), (shopBtn.left - 8f) - w * 0.5f).coerceAtLeast(60f)
+        val topW = minOf(w * 0.27f, centerClearHalf * 2f).coerceAtLeast(120f)
+        val topH = (h * 0.070f).coerceIn(36f, 76f)
+        topHeader.set(w * 0.5f - topW * 0.5f, 6f, w * 0.5f + topW * 0.5f, 6f + topH)
 
-        subRadius = attackRadius * 0.50f
-        val subDist = attackRadius * 1.62f
-        val minionRad = Math.toRadians(173.0).toFloat()
-        val towerRad = Math.toRadians(274.0).toFloat()
+        // MLBB Ergonomic Right-Thumb Fan (tight reachable arc Q=186°..R=264°)
+        attackRadius = (h * 0.080f).coerceIn(44f, 94f)
+        attackCenter.set(w - pad - attackRadius * 1.14f, h - pad - attackRadius * 1.14f)
+
+        subRadius = attackRadius * 0.48f
+        val subDist = attackRadius * 1.56f
+        val minionRad = Math.toRadians(162.0).toFloat()
+        val towerRad = Math.toRadians(282.0).toFloat()
         minionCenter.set(attackCenter.x + cos(minionRad) * subDist, attackCenter.y + sin(minionRad) * subDist)
         towerDenyCenter.set(attackCenter.x + cos(towerRad) * subDist, attackCenter.y + sin(towerRad) * subDist)
 
-        abilityRadius = attackRadius * 0.58f
-        val arcR = attackRadius * 3.04f
-        val anglesDeg = floatArrayOf(188f, 214f, 240f, 266f)
-        val pillW = abilityRadius * 1.18f
-        val pillH = (h * 0.030f).coerceIn(19f, 32f)
+        abilityRadius = attackRadius * 0.56f
+        val arcR = attackRadius * 2.68f
+        val anglesDeg = floatArrayOf(186f, 212f, 238f, 264f)
+        val pillW = abilityRadius * 1.30f
+        val pillH = (h * 0.040f).coerceIn(24f, 44f)
         for (i in 0..3) {
             val rad = Math.toRadians(anglesDeg[i].toDouble()).toFloat()
             val cx = attackCenter.x + cos(rad) * arcR
@@ -124,52 +131,52 @@ class HudGeometry {
         }
 
         // Ergonomic Cancel X right above the skill arc (easy right-thumb reach!)
-        cancelRadius = (h * 0.052f).coerceIn(30f, 52f)
-        val cancelY = (levelUpPills[3].top - cancelRadius - 14f).coerceAtLeast(shopBtn.bottom + cancelRadius + 14f)
-        cancelCenter.set(w - pad - cancelRadius * 1.20f, cancelY)
+        cancelRadius = (h * 0.052f).coerceIn(28f, 56f)
+        val cancelY = (levelUpPills[3].top - cancelRadius - 12f).coerceAtLeast(shopBtn.bottom + cancelRadius + 10f)
+        cancelCenter.set(w - pad - cancelRadius * 1.15f, cancelY)
 
         // Left Joystick anchor zone
-        joystickRadius = (h * 0.095f).coerceIn(52f, 102f)
-        joystickRestCenter.set(pad + joystickRadius * 1.28f, h - pad - joystickRadius * 1.24f)
+        joystickRadius = (h * 0.095f).coerceIn(48f, 108f)
+        joystickRestCenter.set(pad + joystickRadius * 1.24f, h - pad - joystickRadius * 1.22f)
 
         // Dota 2 Bottom Console height & adjacent Courier / Glyph column
-        val consoleH = (h * 0.165f).coerceIn(114f, 178f)
-        val consoleBottom = h - pad * 0.70f
+        val consoleH = (h * 0.185f).coerceIn(112f, 216f)
+        val consoleBottom = h - pad * 0.65f
         val consoleTop = consoleBottom - consoleH
 
-        utilRadius = (consoleH * 0.21f).coerceIn(22f, 36f)
+        utilRadius = (consoleH * 0.20f).coerceIn(20f, 38f)
         val qOuterLeft = minOf(abilityCenters[0].x - abilityRadius, levelUpPills[0].left)
-        val utilColX = qOuterLeft - utilRadius - (w * 0.011f).coerceAtLeast(12f)
+        val utilColX = qOuterLeft - utilRadius - (w * 0.010f).coerceAtLeast(10f)
         courierCenter.set(utilColX, consoleTop + utilRadius + 2f)
         glyphCenter.set(utilColX, consoleBottom - utilRadius - 2f)
 
         // Bottom-center Authentic Dota 2 Hero Console
-        val barLeft = joystickRestCenter.x + joystickRadius + (w * 0.015f).coerceAtLeast(16f)
-        val barRight = utilColX - utilRadius - (w * 0.011f).coerceAtLeast(12f)
-        val availW = (barRight - barLeft).coerceAtLeast(380f)
-        val consoleW = availW.coerceAtMost(h * 1.04f)
+        val barLeft = joystickRestCenter.x + joystickRadius + (w * 0.012f).coerceAtLeast(12f)
+        val barRight = utilColX - utilRadius - (w * 0.010f).coerceAtLeast(10f)
+        val availW = (barRight - barLeft).coerceAtLeast(240f)
+        val consoleW = availW.coerceAtMost(h * 1.24f)
         val cLeft = barLeft + (availW - consoleW) * 0.5f
         val cRight = cLeft + consoleW
         heroConsole.set(cLeft, consoleTop, cRight, consoleBottom)
 
         val innerPad = 6f
         val innerH = consoleH - innerPad * 2f
-        val xpH = (innerH * 0.13f).coerceIn(10f, 18f)
-        val gap = (consoleW * 0.010f).coerceIn(5f, 10f)
+        val xpH = (innerH * 0.135f).coerceIn(11f, 20f)
+        val gap = (consoleW * 0.009f).coerceIn(4f, 9f)
 
         // 1) Portrait + Level + XP Bar
-        val portW = (consoleW * 0.152f).coerceIn(72f, innerH * 0.96f)
+        val portW = (consoleW * 0.145f).coerceIn(62f, innerH * 0.94f)
         portraitBox.set(cLeft + innerPad, consoleTop + innerPad, cLeft + innerPad + portW, consoleBottom - innerPad - xpH - 3f)
         xpBarBox.set(portraitBox.left, portraitBox.bottom + 3f, portraitBox.right, consoleBottom - innerPad)
 
         // 2) Attributes (STR/AGI/INT), Combat Stats & Talent Tree Emblem
-        val attrW = consoleW * 0.235f
+        val attrW = consoleW * 0.242f
         val attrLeft = portraitBox.right + gap
         attrBox.set(attrLeft, consoleTop + innerPad, attrLeft + attrW, consoleBottom - innerPad)
-        talentHudBtn.set(attrLeft, consoleTop + innerPad, attrLeft + attrW * 0.58f, consoleTop + innerPad + (innerH * 0.30f).coerceIn(22f, 38f))
+        talentHudBtn.set(attrLeft, consoleTop + innerPad, attrLeft + attrW * 0.56f, consoleTop + innerPad + (innerH * 0.28f).coerceIn(22f, 40f))
 
         // 3) TP & Neutral Item Column (right edge of Dota Console)
-        val slotColW = maxOf(innerH * 0.44f, utilRadius * 2.02f)
+        val slotColW = maxOf(innerH * 0.43f, utilRadius * 1.98f)
         val tpRight = cRight - innerPad
         val tpLeft = tpRight - slotColW
         val slotGapY = 5f
@@ -181,7 +188,7 @@ class HudGeometry {
         // 4) Dota 2 3x2 Inventory Grid
         val itemGapX = 4f
         val itemGapY = 4f
-        val itemGridW = (consoleW * 0.270f).coerceIn(118f, slotBoxH * 1.32f * 3f + itemGapX * 2f)
+        val itemGridW = (consoleW * 0.275f).coerceIn(110f, slotBoxH * 1.32f * 3f + itemGapX * 2f)
         val itemRight = tpLeft - gap
         val itemLeft = itemRight - itemGridW
         val itemSlotW = (itemGridW - itemGapX * 2f) / 3f
@@ -196,7 +203,7 @@ class HudGeometry {
 
         // 5) Center HP & Mana Bars Plate
         val plateLeft = attrBox.right + gap
-        val plateRight = (itemLeft - gap).coerceAtLeast(plateLeft + 90f)
+        val plateRight = (itemLeft - gap).coerceAtLeast(plateLeft + 48f)
         heroPlate.set(plateLeft, consoleTop + innerPad, plateRight, consoleBottom - innerPad)
 
         buybackBtn.set(w * 0.40f, h * 0.62f, w * 0.60f, h * 0.72f)

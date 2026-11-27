@@ -118,72 +118,89 @@ class MlbbHudOverlayView(
         ensureMinimapBg()
         geo.layout(w, h)
 
-        // Hold-to-attack repeat while ATK/CREEP/TWR button is pressed
-        if (heldAttackMode >= 0 && attackPointerId != -1) {
-            val nowMs = SystemClock.uptimeMillis()
-            if (nowMs - lastAttackRepeatMs >= 260L) {
-                lastAttackRepeatMs = nowMs
-                when (heldAttackMode) {
-                    0 -> world.playerSmartAttack(preferCreep = false, preferDeny = false, silentNoTarget = true)
-                    1 -> world.playerSmartAttack(preferCreep = true, preferDeny = false, silentNoTarget = true)
-                    2 -> world.playerSmartAttack(preferCreep = false, preferDeny = true, preferStructure = true, silentNoTarget = true)
+        synchronized(world) {
+            // Hold-to-attack repeat while ATK/CREEP/TWR button is pressed
+            if (heldAttackMode >= 0 && attackPointerId != -1) {
+                val nowMs = SystemClock.uptimeMillis()
+                if (nowMs - lastAttackRepeatMs >= 260L) {
+                    lastAttackRepeatMs = nowMs
+                    when (heldAttackMode) {
+                        0 -> world.playerSmartAttack(preferCreep = false, preferDeny = false, silentNoTarget = true)
+                        1 -> world.playerSmartAttack(preferCreep = true, preferDeny = false, silentNoTarget = true)
+                        2 -> world.playerSmartAttack(preferCreep = false, preferDeny = true, preferStructure = true, silentNoTarget = true)
+                    }
                 }
             }
+
+            if (world.matchOver && !matchEndNotified) {
+                matchEndNotified = true
+                post { listener.onMatchEnded() }
+            }
+
+            // 1. Projected 3D HP/MP Bars & Floating Damage/Crit Numbers
+            drawProjectedWorldOverlays(canvas, uiScale)
+
+            // 2. Minimap, Camera Lock, Zoom & Quick-Buy Cards
+            drawMinimap(canvas)
+            drawBoxBtn(canvas, geo.camBtn, if (renderer3D.cameraLocked) "CAM LOCK" else "FREE CAM",
+                0xCC111827.toInt(), if (renderer3D.cameraLocked) 0xFF38BDF8.toInt() else 0xFFF59E0B.toInt())
+            val zoomTag = when {
+                renderer3D.cameraZoomDist < 640f -> "Z+"
+                renderer3D.cameraZoomDist > 780f -> "Z-"
+                else -> "ZOOM"
+            }
+            drawBoxBtn(canvas, geo.zoomBtn, zoomTag, 0xCC111827.toInt(), 0xFF94A3B8.toInt())
+            drawQuickBuyCards(canvas)
+
+            // 3. Top Match Header
+            drawTopHeader(canvas, w, h)
+
+            // 4. Top-Right Menu Buttons
+            val ph = world.playerHero
+            drawBoxBtn(canvas, geo.shopBtn, "SHOP ${ph.gold}g", 0xDD78350F.toInt(), 0xFFF59E0B.toInt())
+            val hasTalent = ph.availableTalentTier() != null
+            drawBoxBtn(canvas, geo.talentBtn, if (hasTalent) "TALENT!" else "TALENTS",
+                if (hasTalent) 0xDD065F46.toInt() else 0xCC1E293B.toInt(),
+                if (hasTalent) 0xFF34D399.toInt() else 0xFF64748B.toInt())
+            drawBoxBtn(canvas, geo.statsBtn, "SCORE", 0xCC1E293B.toInt(), 0xFF94A3B8.toInt())
+            drawBoxBtn(canvas, geo.pauseBtn, "MENU", 0xCC1E293B.toInt(), 0xFF94A3B8.toInt())
+
+            // 5. Left Ergonomic Joystick
+            drawJoystick(canvas)
+
+            // 6. Bottom-Center Authentic Dota 2 Hero Console (Portrait, Level, XP, Attributes, Stats, HP/MP, 3x2 Items, TP, Neutral)
+            drawActiveBuffsStrip(canvas, uiScale)
+            drawDotaHeroConsole(canvas, uiScale)
+
+            // 7. Right MLBB Attack Cluster, Skill Fan & Courier/Glyph
+            drawAttackCluster(canvas)
+            drawAbilityArc(canvas, uiScale)
+            drawUtilityButtons(canvas)
+
+            // 8. Aim indicator for active items & Cancel X zone during skill/item drag-aim
+            if (renderer3D.aimingItemSlotIdx >= 0) {
+                val ringCx = aimStartPos.x.coerceIn(geo.abilityRadius * 1.6f, w - geo.abilityRadius * 1.6f)
+                val ringCy = aimStartPos.y.coerceIn(geo.abilityRadius * 1.6f, h - geo.abilityRadius * 1.6f)
+                val ringR = geo.abilityRadius * 1.35f
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 2.4f
+                paint.color = 0xAA38BDF8.toInt()
+                canvas.drawCircle(ringCx, ringCy, ringR, paint)
+                linePaint.color = 0xAA38BDF8.toInt()
+                linePaint.strokeWidth = 2.8f
+                canvas.drawLine(ringCx, ringCy, aimCurrentPos.x, aimCurrentPos.y, linePaint)
+                paint.style = Paint.Style.FILL
+                paint.color = 0xCC38BDF8.toInt()
+                canvas.drawCircle(aimCurrentPos.x, aimCurrentPos.y, ringR * 0.30f, paint)
+            }
+            if (renderer3D.aimingAbilityIdx in 0..3 || renderer3D.aimingItemSlotIdx >= 0) {
+                val bg = if (aimingCancelHovered) 0xEEEF4444.toInt() else 0xCC7F1D1D.toInt()
+                drawCircleBtn(canvas, geo.cancelCenter, geo.cancelRadius, "CANCEL X", bg, 0xFFFCA5A5.toInt(), null)
+            }
+
+            // 9. Dead/Buyback & Announcements
+            drawDeadAndAnnouncements(canvas, w, h)
         }
-
-        if (world.matchOver && !matchEndNotified) {
-            matchEndNotified = true
-            post { listener.onMatchEnded() }
-        }
-
-        // 1. Projected 3D HP/MP Bars & Floating Damage/Crit Numbers
-        drawProjectedWorldOverlays(canvas, uiScale)
-
-        // 2. Minimap, Camera Lock, Zoom & Quick-Buy Cards
-        drawMinimap(canvas)
-        drawBoxBtn(canvas, geo.camBtn, if (renderer3D.cameraLocked) "CAM LOCK" else "FREE CAM",
-            0xCC111827.toInt(), if (renderer3D.cameraLocked) 0xFF38BDF8.toInt() else 0xFFF59E0B.toInt())
-        val zoomTag = when {
-            renderer3D.cameraZoomDist < 640f -> "Z+"
-            renderer3D.cameraZoomDist > 780f -> "Z-"
-            else -> "ZOOM"
-        }
-        drawBoxBtn(canvas, geo.zoomBtn, zoomTag, 0xCC111827.toInt(), 0xFF94A3B8.toInt())
-        drawQuickBuyCards(canvas)
-
-        // 3. Top Match Header
-        drawTopHeader(canvas, w, h)
-
-        // 4. Top-Right Menu Buttons
-        val ph = world.playerHero
-        drawBoxBtn(canvas, geo.shopBtn, "SHOP ${ph.gold}g", 0xDD78350F.toInt(), 0xFFF59E0B.toInt())
-        val hasTalent = ph.availableTalentTier() != null
-        drawBoxBtn(canvas, geo.talentBtn, if (hasTalent) "TALENT!" else "TALENTS",
-            if (hasTalent) 0xDD065F46.toInt() else 0xCC1E293B.toInt(),
-            if (hasTalent) 0xFF34D399.toInt() else 0xFF64748B.toInt())
-        drawBoxBtn(canvas, geo.statsBtn, "SCORE", 0xCC1E293B.toInt(), 0xFF94A3B8.toInt())
-        drawBoxBtn(canvas, geo.pauseBtn, "MENU", 0xCC1E293B.toInt(), 0xFF94A3B8.toInt())
-
-        // 5. Left Ergonomic Joystick
-        drawJoystick(canvas)
-
-        // 6. Bottom-Center Authentic Dota 2 Hero Console (Portrait, Level, XP, Attributes, Stats, HP/MP, 3x2 Items, TP, Neutral)
-        drawActiveBuffsStrip(canvas, uiScale)
-        drawDotaHeroConsole(canvas, uiScale)
-
-        // 7. Right MLBB Attack Cluster, Skill Fan & Courier/Glyph
-        drawAttackCluster(canvas)
-        drawAbilityArc(canvas, uiScale)
-        drawUtilityButtons(canvas)
-
-        // 8. Cancel X zone during skill or item drag-aim
-        if (renderer3D.aimingAbilityIdx in 0..3 || renderer3D.aimingItemSlotIdx >= 0) {
-            val bg = if (aimingCancelHovered) 0xEEEF4444.toInt() else 0xCC7F1D1D.toInt()
-            drawCircleBtn(canvas, geo.cancelCenter, geo.cancelRadius, "CANCEL X", bg, 0xFFFCA5A5.toInt(), null)
-        }
-
-        // 9. Dead/Buyback & Announcements
-        drawDeadAndAnnouncements(canvas, w, h)
 
         postInvalidateOnAnimation()
     }
@@ -346,20 +363,33 @@ class MlbbHudOverlayView(
                 val iconH = b.height() - pad * 2f
                 canvas.drawBitmap(bmp, null, RectF(b.left + pad, b.top + pad, b.left + pad + iconH * 1.25f, b.bottom - pad), paint)
             }
+            val qbTxt = "${item.shortCode} ${effCost}g"
+            val iconRight = b.left + 4f + (b.height() - 8f) * 1.25f
             textPaint.textAlign = Paint.Align.RIGHT
-            textPaint.textSize = (b.height() * 0.34f).coerceIn(11f, 18f)
+            textPaint.textSize = fitTextSize(qbTxt, (b.right - 10f - iconRight).coerceAtLeast(36f), (b.height() * 0.34f).coerceIn(10f, 18f), 7.5f)
             textPaint.color = if (canAfford) 0xFFFDE047.toInt() else 0xFFCBD5E1.toInt()
-            canvas.drawText("${item.shortCode} ${effCost}g", b.right - 8f, b.centerY() + 5f, textPaint)
+            canvas.drawText(qbTxt, b.right - 8f, b.centerY() + textPaint.textSize * 0.35f, textPaint)
         }
     }
 
+    private fun fitTextSize(text: String, maxW: Float, baseSize: Float, minSize: Float = 7f): Float {
+        var sz = baseSize
+        textPaint.textSize = sz
+        val measured = textPaint.measureText(text)
+        if (measured > maxW && measured > 1f) {
+            sz = (sz * (maxW / measured)).coerceIn(minSize, baseSize)
+        }
+        return sz
+    }
+
     private fun drawTopHeader(canvas: Canvas, w: Float, h: Float) {
-        val topW = w * 0.28f
-        val topH = h * 0.072f
-        val topL = w * 0.5f - topW * 0.5f
+        val th = geo.topHeader
+        val topW = th.width()
+        val topH = th.height()
+        val topL = th.left
         paint.style = Paint.Style.FILL
         paint.color = 0xCC0D1320.toInt()
-        rectF.set(topL, 6f, topL + topW, 6f + topH)
+        rectF.set(th.left, th.top, th.right, th.bottom)
         canvas.drawRoundRect(rectF, 14f, 14f, paint)
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 1.8f
@@ -369,24 +399,25 @@ class MlbbHudOverlayView(
         val mins = (world.gameTime / 60f).toInt()
         val secs = (world.gameTime % 60f).toInt()
         val clock = "%02d:%02d".format(mins, secs)
+        val clockStr = if (world.isNight) "NIGHT $clock" else "DAY $clock"
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.typeface = Typeface.DEFAULT_BOLD
-        textPaint.textSize = topH * 0.44f
+        textPaint.textSize = fitTextSize(clockStr, topW * 0.52f, topH * 0.44f, 9f)
         textPaint.color = if (world.isNight) 0xFF93C5FD.toInt() else 0xFFFDE047.toInt()
-        canvas.drawText(if (world.isNight) "NIGHT $clock" else "DAY $clock", w * 0.5f, 6f + topH * 0.65f, textPaint)
+        canvas.drawText(clockStr, th.centerX(), th.top + topH * 0.65f, textPaint)
 
-        textPaint.textSize = topH * 0.54f
+        textPaint.textSize = (topH * 0.54f).coerceIn(11f, 28f)
         textPaint.color = 0xFF2ECC71.toInt()
-        canvas.drawText("${world.radiantKills}", topL + topW * 0.14f, 6f + topH * 0.68f, textPaint)
+        canvas.drawText("${world.radiantKills}", topL + topW * 0.14f, th.top + topH * 0.68f, textPaint)
         textPaint.color = 0xFFE74C3C.toInt()
-        canvas.drawText("${world.direKills}", topL + topW * 0.86f, 6f + topH * 0.68f, textPaint)
+        canvas.drawText("${world.direKills}", topL + topW * 0.86f, th.top + topH * 0.68f, textPaint)
 
         val ph = world.playerHero
+        val statLine = "GOLD ${ph.gold}  •  ${ph.kills}/${ph.deaths}/${ph.assists}  •  CS ${ph.lastHits}/${ph.denies}"
         textPaint.typeface = Typeface.DEFAULT
-        textPaint.textSize = topH * 0.35f
+        textPaint.textSize = fitTextSize(statLine, topW * 1.15f, topH * 0.35f, 8.5f)
         textPaint.color = 0xFFFDE047.toInt()
-        canvas.drawText("GOLD ${ph.gold}  •  ${ph.kills}/${ph.deaths}/${ph.assists}  •  CS ${ph.lastHits}/${ph.denies}",
-            w * 0.5f, 6f + topH + topH * 0.44f, textPaint)
+        canvas.drawText(statLine, th.centerX(), th.bottom + topH * 0.44f, textPaint)
     }
 
     private fun drawJoystick(canvas: Canvas) {
@@ -495,7 +526,7 @@ class MlbbHudOverlayView(
         canvas.drawText(ph.def.attribute.shortLabel.take(1), pb.left + attrR + 3f, pb.top + attrR * 1.32f + 3f, textPaint)
 
         // Golden Level Circle bottom-right of portrait
-        val lvlR = (pb.height() * 0.19f).coerceIn(9f, 17f)
+        val lvlR = (pb.height() * 0.19f).coerceIn(9f, 18f)
         val lvlCx = pb.right - lvlR - 2f
         val lvlCy = pb.bottom - lvlR - 2f
         paint.style = Paint.Style.FILL
@@ -509,6 +540,23 @@ class MlbbHudOverlayView(
         textPaint.textSize = lvlR * 1.05f
         canvas.drawText("${ph.level}", lvlCx, lvlCy + lvlR * 0.36f, textPaint)
 
+        // Skill points available indicator at top-right of portrait
+        if (ph.skillPoints > 0) {
+            val spR = (pb.height() * 0.14f).coerceIn(7f, 13f)
+            val spCx = pb.right - spR - 2f
+            val spCy = pb.top + spR + 2f
+            paint.style = Paint.Style.FILL
+            paint.color = 0xEE15803D.toInt()
+            canvas.drawCircle(spCx, spCy, spR, paint)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.4f
+            paint.color = 0xFF4ADE80.toInt()
+            canvas.drawCircle(spCx, spCy, spR, paint)
+            textPaint.color = Color.WHITE
+            textPaint.textSize = spR * 0.96f
+            canvas.drawText("+${ph.skillPoints}", spCx, spCy + spR * 0.34f, textPaint)
+        }
+
         // XP Bar right below portrait
         val xb = geo.xpBarBox
         val xpPct = DotaMath.xpProgress(ph.xp, ph.level)
@@ -520,9 +568,10 @@ class MlbbHudOverlayView(
         rectF.set(xb.left, xb.top, xb.left + xb.width() * xpPct, xb.bottom)
         canvas.drawRoundRect(rectF, 4f, 4f, paint)
         val (_, nextXp) = DotaMath.xpForNextLevel(ph.level)
+        val xpLabel = if (ph.level >= 30) "MAX" else "XP ${ph.xp}/$nextXp"
         textPaint.color = Color.WHITE
-        textPaint.textSize = (xb.height() * 0.72f).coerceIn(7.5f, 12f)
-        canvas.drawText(if (ph.level >= 30) "MAX LVL" else "XP ${ph.xp}/$nextXp", xb.centerX(), xb.centerY() + textPaint.textSize * 0.34f, textPaint)
+        textPaint.textSize = fitTextSize(xpLabel, xb.width() - 4f, (xb.height() * 0.72f).coerceIn(7.5f, 12f), 6.5f)
+        canvas.drawText(xpLabel, xb.centerX(), xb.centerY() + textPaint.textSize * 0.34f, textPaint)
 
         // 3. Attributes (STR/AGI/INT), Combat Stats, Talent Tree & Scepter/Shard
         val ab = geo.attrBox
@@ -535,6 +584,8 @@ class MlbbHudOverlayView(
         // Scepter & Shard mini badges beside Talent button
         val badgeLeft = tb.right + 4f
         val badgeW = ((ab.right - badgeLeft - 4f) * 0.5f).coerceAtLeast(16f)
+        val badgeBaseSz = (tb.height() * 0.36f).coerceIn(7.5f, 12.5f)
+        textPaint.typeface = Typeface.DEFAULT_BOLD
         rectF.set(badgeLeft, tb.top, badgeLeft + badgeW, tb.bottom)
         paint.style = Paint.Style.FILL
         paint.color = if (ph.hasScepter) 0xFF1D4ED8.toInt() else 0xFF151E2E.toInt()
@@ -543,7 +594,7 @@ class MlbbHudOverlayView(
         paint.color = if (ph.hasScepter) 0xFF60A5FA.toInt() else 0xFF334155.toInt()
         canvas.drawRoundRect(rectF, 5f, 5f, paint)
         textPaint.color = if (ph.hasScepter) Color.WHITE else 0xFF64748B.toInt()
-        textPaint.textSize = (tb.height() * 0.38f).coerceIn(8f, 13f)
+        textPaint.textSize = fitTextSize("AGH", badgeW - 4f, badgeBaseSz, 6.5f)
         canvas.drawText("AGH", rectF.centerX(), rectF.centerY() + textPaint.textSize * 0.35f, textPaint)
 
         rectF.set(badgeLeft + badgeW + 4f, tb.top, ab.right, tb.bottom)
@@ -554,67 +605,89 @@ class MlbbHudOverlayView(
         paint.color = if (ph.hasShard) 0xFF38BDF8.toInt() else 0xFF334155.toInt()
         canvas.drawRoundRect(rectF, 5f, 5f, paint)
         textPaint.color = if (ph.hasShard) Color.WHITE else 0xFF64748B.toInt()
+        textPaint.textSize = fitTextSize("SHD", badgeW - 4f, badgeBaseSz, 6.5f)
         canvas.drawText("SHD", rectF.centerX(), rectF.centerY() + textPaint.textSize * 0.35f, textPaint)
 
-        // STR / AGI / INT Circles + Numbers
-        val attrY = tb.bottom + (ab.bottom - tb.bottom) * 0.32f
+        // STR / AGI / INT Labeled Attribute Columns (Orbs + Labels + Values)
+        val attrTop = tb.bottom + 3f
+        val attrAreaH = ab.bottom - attrTop
         val colW = ab.width() / 3f
         val attrs = arrayOf(
             Triple("STR", ph.cachedStr.toInt(), PrimaryAttribute.STRENGTH),
             Triple("AGI", ph.cachedAgi.toInt(), PrimaryAttribute.AGILITY),
             Triple("INT", ph.cachedInt.toInt(), PrimaryAttribute.INTELLIGENCE)
         )
-        val dotR = (ab.height() * 0.068f).coerceIn(4f, 7f)
-        val attrTxtSz = (ab.height() * 0.130f).coerceIn(9.5f, 15f)
+        val dotR = (attrAreaH * 0.072f).coerceIn(3.5f, 6.5f)
+        val lblSz = (attrAreaH * 0.145f).coerceIn(7.5f, 11.5f)
+        val valSz = (attrAreaH * 0.190f).coerceIn(9.5f, 15.5f)
         for (k in 0..2) {
             val colLeft = ab.left + colW * k
-            val dotCx = colLeft + dotR + 3f
-            val dotCy = attrY - dotR * 0.2f
+            val colCx = colLeft + colW * 0.5f
             val isPrim = ph.def.attribute == attrs[k].third
+            val dotCx = colCx - dotR - 7f
+            val row1Y = attrTop + attrAreaH * 0.21f
             paint.style = Paint.Style.FILL
             paint.color = attrs[k].third.colorHex
-            canvas.drawCircle(dotCx, dotCy, dotR, paint)
+            canvas.drawCircle(dotCx, row1Y - dotR * 0.4f, dotR, paint)
             if (isPrim) {
                 paint.style = Paint.Style.STROKE
-                paint.strokeWidth = 1.5f
+                paint.strokeWidth = 1.4f
                 paint.color = Color.WHITE
-                canvas.drawCircle(dotCx, dotCy, dotR + 1.4f, paint)
+                canvas.drawCircle(dotCx, row1Y - dotR * 0.4f, dotR + 1.3f, paint)
             }
             textPaint.textAlign = Paint.Align.LEFT
-            textPaint.textSize = attrTxtSz
+            textPaint.typeface = Typeface.DEFAULT_BOLD
+            textPaint.textSize = fitTextSize(attrs[k].first, colW * 0.55f, lblSz, 6.5f)
+            textPaint.color = if (isPrim) 0xFFFDE047.toInt() else 0xFF94A3B8.toInt()
+            canvas.drawText(attrs[k].first, dotCx + dotR + 3f, row1Y, textPaint)
+
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.textSize = fitTextSize("${attrs[k].second}", colW - 4f, valSz, 8f)
             textPaint.color = if (isPrim) 0xFFFDE047.toInt() else Color.WHITE
-            canvas.drawText("${attrs[k].second}", dotCx + dotR + 4f, attrY + attrTxtSz * 0.25f, textPaint)
+            canvas.drawText("${attrs[k].second}", colCx, attrTop + attrAreaH * 0.46f, textPaint)
         }
 
         // Combat Stats: DMG, ARM, MS, AS
-        val statY1 = tb.bottom + (ab.bottom - tb.bottom) * 0.65f
-        val statY2 = tb.bottom + (ab.bottom - tb.bottom) * 0.94f
-        val statSz = (ab.height() * 0.118f).coerceIn(9f, 14f)
-        textPaint.textSize = statSz
+        val statY1 = attrTop + attrAreaH * 0.72f
+        val statY2 = attrTop + attrAreaH * 0.96f
+        val statSz = (attrAreaH * 0.155f).coerceIn(8.5f, 13.5f)
+        textPaint.typeface = Typeface.DEFAULT
         textPaint.textAlign = Paint.Align.LEFT
+        val halfW = ab.width() * 0.48f
+        val dmgTxt = "DMG ${ph.cachedDamage.toInt()}"
+        val armTxt = "ARM ${"%.1f".format(ph.armor)}"
+        val msTxt = "MS ${ph.cachedMoveSpeed.toInt()}"
+        val asTxt = "AS ${ph.cachedAttackSpeed.toInt()}"
         textPaint.color = if (ph.hasStatus(StatusType.DOUBLE_DAMAGE) || ph.enchantTotemBuff) 0xFF38BDF8.toInt() else 0xFFE2E8F0.toInt()
-        canvas.drawText("DMG ${ph.cachedDamage.toInt()}", ab.left + 2f, statY1, textPaint)
+        textPaint.textSize = fitTextSize(dmgTxt, halfW, statSz, 7f)
+        canvas.drawText(dmgTxt, ab.left + 2f, statY1, textPaint)
         textPaint.color = 0xFFCBD5E1.toInt()
-        canvas.drawText("ARM ${"%.1f".format(ph.armor)}", ab.left + ab.width() * 0.50f, statY1, textPaint)
-        canvas.drawText("MS ${ph.cachedMoveSpeed.toInt()}", ab.left + 2f, statY2, textPaint)
-        canvas.drawText("AS ${ph.cachedAttackSpeed.toInt()}", ab.left + ab.width() * 0.50f, statY2, textPaint)
+        textPaint.textSize = fitTextSize(armTxt, halfW, statSz, 7f)
+        canvas.drawText(armTxt, ab.left + ab.width() * 0.51f, statY1, textPaint)
+        textPaint.textSize = fitTextSize(msTxt, halfW, statSz, 7f)
+        canvas.drawText(msTxt, ab.left + 2f, statY2, textPaint)
+        textPaint.textSize = fitTextSize(asTxt, halfW, statSz, 7f)
+        canvas.drawText(asTxt, ab.left + ab.width() * 0.51f, statY2, textPaint)
 
-        // 4. Center Hero Name + HP/MP Bars
+        // 4. Center Hero Name + Gold/Stash + Collision-Free HP/MP Bars
         val p = geo.heroPlate
         val rowH = (p.height() - 8f) / 3f
-        textPaint.textAlign = Paint.Align.LEFT
-        textPaint.textSize = (rowH * 0.56f).coerceIn(10f, 17f)
-        textPaint.color = 0xFFF5B041.toInt()
         val extraTag = when {
             ph.def.id == "pudge" && ph.fleshHeapStacks > 0 -> " • Heap +${ph.fleshHeapStacks}"
             ph.def.id == "axe" && ph.coatOfBloodStacks > 0 -> " • Blood +${ph.coatOfBloodStacks}"
             ph.desoStacks > 0 -> " • Deso +${ph.desoStacks}"
-            ph.def.id == "invoker" -> " • [Q][W][E]"
+            ph.def.id == "invoker" -> " • QWE"
+            ph.stash.isNotEmpty() -> " • Stash ${ph.stash.size}"
             else -> ""
         }
-        canvas.drawText("${ph.def.name.uppercase()}$extraTag", p.left + 2f, p.top + rowH * 0.72f, textPaint)
+        val titleTxt = "${ph.def.name.uppercase()}$extraTag"
+        textPaint.typeface = Typeface.DEFAULT_BOLD
+        textPaint.textAlign = Paint.Align.LEFT
+        textPaint.color = 0xFFF5B041.toInt()
+        textPaint.textSize = fitTextSize(titleTxt, p.width() - 4f, (rowH * 0.52f).coerceIn(9f, 16f), 7.5f)
+        canvas.drawText(titleTxt, p.left + 2f, p.top + rowH * 0.72f, textPaint)
 
-        // HP Bar
+        // HP Bar (collision-free HP + regen layout)
         val hpY = p.top + rowH + 2f
         val barH = rowH * 0.88f
         val hpPct = (ph.hp / ph.maxHp.coerceAtLeast(1f)).coerceIn(0f, 1f)
@@ -625,16 +698,35 @@ class MlbbHudOverlayView(
         paint.color = 0xFF22C55E.toInt()
         rectF.set(p.left, hpY, p.left + p.width() * hpPct, hpY + barH)
         canvas.drawRoundRect(rectF, 5f, 5f, paint)
-        textPaint.textAlign = Paint.Align.CENTER
-        textPaint.color = Color.WHITE
-        textPaint.textSize = (barH * 0.58f).coerceIn(9.5f, 16f)
-        canvas.drawText("${ph.hp.toInt()} / ${ph.maxHp.toInt()}", p.centerX(), hpY + barH * 0.70f, textPaint)
-        textPaint.textAlign = Paint.Align.RIGHT
-        textPaint.textSize = (barH * 0.48f).coerceIn(8f, 13f)
-        textPaint.color = 0xFFBBF7D0.toInt()
-        canvas.drawText("+${"%.1f".format(ph.cachedHpRegen)}", p.right - 5f, hpY + barH * 0.68f, textPaint)
+        val hpMain = "${ph.hp.toInt()} / ${ph.maxHp.toInt()}"
+        val hpReg = "+${"%.1f".format(ph.cachedHpRegen)}"
+        val barFont = (barH * 0.54f).coerceIn(8.5f, 15f)
+        val regFont = (barH * 0.44f).coerceIn(7.5f, 12.5f)
+        textPaint.textSize = barFont
+        val hpW = textPaint.measureText(hpMain)
+        textPaint.textSize = regFont
+        val regW = textPaint.measureText(hpReg)
+        if (hpW + regW * 2f + 16f <= p.width()) {
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.color = Color.WHITE
+            textPaint.textSize = barFont
+            canvas.drawText(hpMain, p.centerX(), hpY + barH * 0.70f, textPaint)
+            textPaint.textAlign = Paint.Align.RIGHT
+            textPaint.color = 0xFFBBF7D0.toInt()
+            textPaint.textSize = regFont
+            canvas.drawText(hpReg, p.right - 5f, hpY + barH * 0.68f, textPaint)
+        } else {
+            textPaint.textAlign = Paint.Align.LEFT
+            textPaint.color = Color.WHITE
+            textPaint.textSize = fitTextSize(hpMain, p.width() - regW - 12f, barFont, 7.5f)
+            canvas.drawText(hpMain, p.left + 5f, hpY + barH * 0.70f, textPaint)
+            textPaint.textAlign = Paint.Align.RIGHT
+            textPaint.color = 0xFFBBF7D0.toInt()
+            textPaint.textSize = regFont
+            canvas.drawText(hpReg, p.right - 5f, hpY + barH * 0.68f, textPaint)
+        }
 
-        // Mana Bar
+        // Mana Bar (collision-free MP + regen layout)
         val mpY = hpY + rowH + 2f
         val mpPct = (ph.mana / ph.maxMana.coerceAtLeast(1f)).coerceIn(0f, 1f)
         paint.color = 0xFF0E233A.toInt()
@@ -643,14 +735,31 @@ class MlbbHudOverlayView(
         paint.color = 0xFF0EA5E9.toInt()
         rectF.set(p.left, mpY, p.left + p.width() * mpPct, mpY + barH)
         canvas.drawRoundRect(rectF, 5f, 5f, paint)
-        textPaint.textAlign = Paint.Align.CENTER
-        textPaint.color = Color.WHITE
-        textPaint.textSize = (barH * 0.58f).coerceIn(9.5f, 16f)
-        canvas.drawText("${ph.mana.toInt()} / ${ph.maxMana.toInt()}", p.centerX(), mpY + barH * 0.70f, textPaint)
-        textPaint.textAlign = Paint.Align.RIGHT
-        textPaint.textSize = (barH * 0.48f).coerceIn(8f, 13f)
-        textPaint.color = 0xFFBAE6FD.toInt()
-        canvas.drawText("+${"%.1f".format(ph.cachedManaRegen)}", p.right - 5f, mpY + barH * 0.68f, textPaint)
+        val mpMain = "${ph.mana.toInt()} / ${ph.maxMana.toInt()}"
+        val mpReg = "+${"%.1f".format(ph.cachedManaRegen)}"
+        textPaint.textSize = barFont
+        val mpW = textPaint.measureText(mpMain)
+        textPaint.textSize = regFont
+        val mpRegW = textPaint.measureText(mpReg)
+        if (mpW + mpRegW * 2f + 16f <= p.width()) {
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.color = Color.WHITE
+            textPaint.textSize = barFont
+            canvas.drawText(mpMain, p.centerX(), mpY + barH * 0.70f, textPaint)
+            textPaint.textAlign = Paint.Align.RIGHT
+            textPaint.color = 0xFFBAE6FD.toInt()
+            textPaint.textSize = regFont
+            canvas.drawText(mpReg, p.right - 5f, mpY + barH * 0.68f, textPaint)
+        } else {
+            textPaint.textAlign = Paint.Align.LEFT
+            textPaint.color = Color.WHITE
+            textPaint.textSize = fitTextSize(mpMain, p.width() - mpRegW - 12f, barFont, 7.5f)
+            canvas.drawText(mpMain, p.left + 5f, mpY + barH * 0.70f, textPaint)
+            textPaint.textAlign = Paint.Align.RIGHT
+            textPaint.color = 0xFFBAE6FD.toInt()
+            textPaint.textSize = regFont
+            canvas.drawText(mpReg, p.right - 5f, mpY + barH * 0.68f, textPaint)
+        }
 
         // 5. Dota 2 3x2 Inventory Slots
         for (i in 0..5) {
@@ -672,16 +781,28 @@ class MlbbHudOverlayView(
                     canvas.drawBitmap(icon, null, RectF(b.left + 2f, b.top + 2f, b.right - 2f, b.bottom - 2f), paint)
                     canvas.restore()
                 }
+                val lowManaItem = item != null && item.isActive && item.manaCost > ph.mana
                 if (slot.cooldownRemaining > 0f) {
+                    paint.style = Paint.Style.FILL
                     paint.color = 0xAA000000.toInt()
                     canvas.drawRoundRect(rectF, 6f, 6f, paint)
                     textPaint.color = Color.WHITE
-                    textPaint.textSize = 12f * uiScale
+                    textPaint.textSize = (b.height() * 0.36f).coerceIn(10f, 18f)
                     textPaint.textAlign = Paint.Align.CENTER
-                    canvas.drawText("${slot.cooldownRemaining.toInt()}", b.centerX(), b.centerY() + 4f, textPaint)
-                } else if (slot.stacks > 1 || item?.id == "magic_wand") {
+                    canvas.drawText("${slot.cooldownRemaining.toInt()}", b.centerX(), b.centerY() + textPaint.textSize * 0.35f, textPaint)
+                } else if (lowManaItem) {
+                    paint.style = Paint.Style.FILL
+                    paint.color = 0x880C2D57.toInt()
+                    canvas.drawRoundRect(rectF, 6f, 6f, paint)
+                }
+                if (item != null && item.isActive) {
+                    paint.style = Paint.Style.FILL
+                    paint.color = if (isAimableItem(item.id)) 0xFF38BDF8.toInt() else 0xFFFACC15.toInt()
+                    canvas.drawCircle(b.left + 6f, b.top + 6f, 3.2f, paint)
+                }
+                if (slot.cooldownRemaining <= 0f && (slot.stacks > 1 || item?.id == "magic_wand")) {
                     textPaint.color = 0xFFFDE047.toInt()
-                    textPaint.textSize = 10f * uiScale
+                    textPaint.textSize = (b.height() * 0.25f).coerceIn(8.5f, 14f)
                     textPaint.textAlign = Paint.Align.RIGHT
                     val badge = if (item?.id == "magic_wand") "${slot.charges}" else "x${slot.stacks}"
                     canvas.drawText(badge, b.right - 3f, b.bottom - 3f, textPaint)
@@ -692,7 +813,7 @@ class MlbbHudOverlayView(
                         else -> "INT" to 0xFF38BDF8.toInt()
                     }
                     textPaint.color = tCol
-                    textPaint.textSize = 8.5f * uiScale
+                    textPaint.textSize = (b.height() * 0.23f).coerceIn(8f, 13f)
                     textPaint.textAlign = Paint.Align.LEFT
                     canvas.drawText(tLbl, b.left + 3f, b.bottom - 3f, textPaint)
                 }
@@ -710,9 +831,23 @@ class MlbbHudOverlayView(
         // 6. TP Scroll Slot & Neutral Item Slot
         val tpB = geo.tpSlot
         val tpR = minOf(tpB.width(), tpB.height()) * 0.46f
+        val tpC = Vec2(tpB.centerX(), tpB.centerY())
+        drawCircleBtn(canvas, tpC, tpR, "",
+            0xCC1E3A8A.toInt(), if (ph.tpCooldown > 0f) 0xFF475569.toInt() else 0xFF60A5FA.toInt(),
+            DotaAssetLoader.getItemIcon("tp_scroll"))
+        if (ph.tpCooldown > 0f) {
+            paint.style = Paint.Style.FILL
+            paint.color = 0xAA000000.toInt()
+            canvas.drawCircle(tpC.x, tpC.y, tpR, paint)
+        }
         val tpTxt = if (ph.tpCooldown > 0f) "${ph.tpCooldown.toInt()}" else "TP"
-        drawCircleBtn(canvas, Vec2(tpB.centerX(), tpB.centerY()), tpR, tpTxt,
-            0xCC1E3A8A.toInt(), 0xFF60A5FA.toInt(), DotaAssetLoader.getItemIcon("tp_scroll"))
+        textPaint.color = Color.WHITE
+        textPaint.textAlign = Paint.Align.CENTER
+        textPaint.typeface = Typeface.DEFAULT_BOLD
+        textPaint.textSize = (tpR * 0.42f).coerceIn(9f, 16f)
+        textPaint.setShadowLayer(3f, 0f, 1f, Color.BLACK)
+        canvas.drawText(tpTxt, tpC.x, tpC.y + textPaint.textSize * 0.36f, textPaint)
+        textPaint.clearShadowLayer()
 
         val neuB = geo.neutralSlot
         val neuR = minOf(neuB.width(), neuB.height()) * 0.46f
@@ -937,268 +1072,320 @@ class MlbbHudOverlayView(
         val sx = event.getX(idx)
         val sy = event.getY(idx)
         val w = width.toFloat().coerceAtLeast(1f)
+        val h = height.toFloat().coerceAtLeast(1f)
 
-        when (action) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
-                if (geo.minimap.contains(sx, sy)) {
-                    minimapPointerId = pid
-                    panFromMinimap(sx, sy)
-                    return true
-                }
-                if (geo.camBtn.contains(sx, sy)) {
-                    renderer3D.cameraLocked = !renderer3D.cameraLocked
-                    if (renderer3D.cameraLocked) renderer3D.cameraPos.set(world.playerHero.pos.x, world.playerHero.pos.y)
-                    return true
-                }
-                if (geo.zoomBtn.contains(sx, sy)) {
-                    renderer3D.cameraZoomDist = when {
-                        renderer3D.cameraZoomDist < 640f -> 690f
-                        renderer3D.cameraZoomDist < 780f -> 850f
-                        else -> 580f
+        synchronized(world) {
+            when (action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                    if (geo.minimap.contains(sx, sy)) {
+                        minimapPointerId = pid
+                        panFromMinimap(sx, sy)
+                        return true
                     }
-                    return true
-                }
-                if (geo.shopBtn.contains(sx, sy)) { listener.onOpenShop(); return true }
-                if (geo.talentBtn.contains(sx, sy) || geo.talentHudBtn.contains(sx, sy)) { listener.onOpenTalents(); return true }
-                if (geo.statsBtn.contains(sx, sy)) { listener.onOpenScoreboard(); return true }
-                if (geo.pauseBtn.contains(sx, sy)) { listener.onOpenPauseMenu(); return true }
-                if (geo.portraitBox.contains(sx, sy)) {
-                    renderer3D.cameraLocked = true
-                    renderer3D.cameraPos.set(world.playerHero.pos.x, world.playerHero.pos.y)
-                    return true
-                }
-
-                for (qi in 0..1) {
-                    if (geo.quickBuy[qi].contains(sx, sy)) {
-                        buildQuickBuySuggestions().getOrNull(qi)?.let { id ->
-                            if (world.buyItem(world.playerHero, id)) world.dispatchCourier(world.playerHero)
+                    if (geo.camBtn.contains(sx, sy)) {
+                        renderer3D.cameraLocked = !renderer3D.cameraLocked
+                        if (renderer3D.cameraLocked) renderer3D.cameraPos.set(world.playerHero.pos.x, world.playerHero.pos.y)
+                        return true
+                    }
+                    if (geo.zoomBtn.contains(sx, sy)) {
+                        renderer3D.cameraZoomDist = when {
+                            renderer3D.cameraZoomDist < 640f -> 690f
+                            renderer3D.cameraZoomDist < 780f -> 850f
+                            else -> 580f
                         }
                         return true
                     }
-                }
-                if (!world.playerHero.alive && geo.buybackBtn.contains(sx, sy)) {
-                    world.buyback(world.playerHero)
-                    return true
-                }
-                if (hypot(sx - geo.attackCenter.x, sy - geo.attackCenter.y) <= geo.attackRadius + 10f) {
-                    attackPointerId = pid
-                    heldAttackMode = 0
-                    lastAttackRepeatMs = SystemClock.uptimeMillis()
-                    renderer3D.showAttackRangeRing = true
-                    world.playerSmartAttack(preferCreep = false, preferDeny = false)
-                    return true
-                }
-                if (hypot(sx - geo.minionCenter.x, sy - geo.minionCenter.y) <= geo.subRadius + 10f) {
-                    attackPointerId = pid
-                    heldAttackMode = 1
-                    lastAttackRepeatMs = SystemClock.uptimeMillis()
-                    renderer3D.showAttackRangeRing = true
-                    world.playerSmartAttack(preferCreep = true, preferDeny = false)
-                    return true
-                }
-                if (hypot(sx - geo.towerDenyCenter.x, sy - geo.towerDenyCenter.y) <= geo.subRadius + 10f) {
-                    attackPointerId = pid
-                    heldAttackMode = 2
-                    lastAttackRepeatMs = SystemClock.uptimeMillis()
-                    renderer3D.showAttackRangeRing = true
-                    world.playerSmartAttack(preferCreep = false, preferDeny = true, preferStructure = true)
-                    return true
-                }
-                for (i in 0..3) {
-                    if (world.playerHero.canLevelAbility(i) && geo.levelUpPills[i].contains(sx, sy)) {
-                        world.levelUpAbility(world.playerHero, i)
+                    if (geo.shopBtn.contains(sx, sy)) { listener.onOpenShop(); return true }
+                    if (geo.talentBtn.contains(sx, sy) || geo.talentHudBtn.contains(sx, sy) || geo.attrBox.contains(sx, sy)) {
+                        listener.onOpenTalents()
                         return true
                     }
-                }
-                for (i in 0..3) {
-                    val c = geo.abilityCenters[i]
-                    if (hypot(sx - c.x, sy - c.y) <= geo.abilityRadius + 10f) {
-                        val ab = world.playerHero.def.abilities[i]
-                        if (ab.targetType == TargetType.PASSIVE) {
-                            world.addFloatingText(world.playerHero.pos, "${ab.name} (Passive)", 0xFF94A3B8.toInt(), 0.7f)
+                    if (geo.statsBtn.contains(sx, sy)) { listener.onOpenScoreboard(); return true }
+                    if (geo.pauseBtn.contains(sx, sy)) { listener.onOpenPauseMenu(); return true }
+                    if (geo.portraitBox.contains(sx, sy)) {
+                        renderer3D.cameraLocked = true
+                        renderer3D.cameraPos.set(world.playerHero.pos.x, world.playerHero.pos.y)
+                        return true
+                    }
+
+                    for (qi in 0..1) {
+                        if (geo.quickBuy[qi].contains(sx, sy)) {
+                            buildQuickBuySuggestions().getOrNull(qi)?.let { id ->
+                                if (world.buyItem(world.playerHero, id)) world.dispatchCourier(world.playerHero)
+                            }
                             return true
                         }
-                        if (ab.targetType == TargetType.INSTANT || ab.targetType == TargetType.TOGGLE) {
-                            world.castAbility(world.playerHero, i, defaultAutoAim(ab.castRange))
-                        } else {
-                            aimPointerId = pid
-                            aimStartPos.set(c.x, c.y)
-                            aimCurrentPos.set(c.x, c.y)
-                            aimManualMoved = false
-                            aimingCancelHovered = false
-                            renderer3D.aimingAbilityIdx = i
-                            renderer3D.aimingItemSlotIdx = -1
-                            val auto = defaultAutoAim(ab.castRange)
-                            renderer3D.aimWorldPos.set(auto.x, auto.y)
-                        }
+                    }
+                    if (!world.playerHero.alive && geo.buybackBtn.contains(sx, sy)) {
+                        world.buyback(world.playerHero)
                         return true
                     }
-                }
-                if (geo.tpSlot.contains(sx, sy)) {
-                    world.useTpScroll(world.playerHero, renderer3D.cameraPos)
-                    return true
-                }
-                if (hypot(sx - geo.courierCenter.x, sy - geo.courierCenter.y) <= geo.utilRadius + 8f) {
-                    world.dispatchCourier(world.playerHero)
-                    return true
-                }
-                if (hypot(sx - geo.glyphCenter.x, sy - geo.glyphCenter.y) <= geo.utilRadius + 8f) {
-                    world.activateGlyph(world.playerTeam)
-                    return true
-                }
-                for (i in 0..5) {
-                    if (geo.itemSlots[i].contains(sx, sy)) {
-                        val slot = world.playerHero.inventory.getOrNull(i) ?: return true
-                        if (isAimableItem(slot.itemId)) {
-                            aimPointerId = pid
-                            aimStartPos.set(geo.itemSlots[i].centerX(), geo.itemSlots[i].centerY())
-                            aimCurrentPos.set(sx, sy)
-                            aimManualMoved = false
-                            aimingCancelHovered = false
-                            renderer3D.aimingItemSlotIdx = i
-                            renderer3D.aimingAbilityIdx = -1
-                            val smart = smartItemTarget(slot.itemId)
-                            renderer3D.aimWorldPos.set(smart.x, smart.y)
-                        } else {
-                            world.useItemSlot(world.playerHero, i, world.playerHero.pos)
-                        }
+                    if (hypot(sx - geo.attackCenter.x, sy - geo.attackCenter.y) <= geo.attackRadius + 10f) {
+                        attackPointerId = pid
+                        heldAttackMode = 0
+                        lastAttackRepeatMs = SystemClock.uptimeMillis()
+                        renderer3D.showAttackRangeRing = true
+                        world.playerSmartAttack(preferCreep = false, preferDeny = false)
                         return true
                     }
+                    if (hypot(sx - geo.minionCenter.x, sy - geo.minionCenter.y) <= geo.subRadius + 10f) {
+                        attackPointerId = pid
+                        heldAttackMode = 1
+                        lastAttackRepeatMs = SystemClock.uptimeMillis()
+                        renderer3D.showAttackRangeRing = true
+                        world.playerSmartAttack(preferCreep = true, preferDeny = false)
+                        return true
+                    }
+                    if (hypot(sx - geo.towerDenyCenter.x, sy - geo.towerDenyCenter.y) <= geo.subRadius + 10f) {
+                        attackPointerId = pid
+                        heldAttackMode = 2
+                        lastAttackRepeatMs = SystemClock.uptimeMillis()
+                        renderer3D.showAttackRangeRing = true
+                        world.playerSmartAttack(preferCreep = false, preferDeny = true, preferStructure = true)
+                        return true
+                    }
+                    for (i in 0..3) {
+                        val pill = geo.levelUpPills[i]
+                        if (world.playerHero.canLevelAbility(i) &&
+                            sx in (pill.left - 8f)..(pill.right + 8f) &&
+                            sy in (pill.top - 8f)..(pill.bottom + 8f)
+                        ) {
+                            world.levelUpAbility(world.playerHero, i)
+                            return true
+                        }
+                    }
+                    for (i in 0..3) {
+                        val c = geo.abilityCenters[i]
+                        if (hypot(sx - c.x, sy - c.y) <= geo.abilityRadius + 10f) {
+                            val ph = world.playerHero
+                            val ab = ph.def.abilities[i]
+                            if (ab.targetType == TargetType.PASSIVE) {
+                                world.addFloatingText(ph.pos, "${ab.name} (Passive)", 0xFF94A3B8.toInt(), 0.7f)
+                                return true
+                            }
+                            val lvl = ph.abilityLevels[i]
+                            if (lvl <= 0) {
+                                world.addFloatingText(ph.pos, "Not Learned", 0xFF94A3B8.toInt(), 0.6f)
+                                return true
+                            }
+                            if (ab.maxCharges > 1 && ph.abilityCharges[i] <= 0) {
+                                world.addFloatingText(ph.pos, "No Charges", 0xFFF59E0B.toInt(), 0.6f)
+                                return true
+                            }
+                            if (ab.maxCharges <= 1 && ph.abilityCooldowns[i] > 0f) {
+                                world.addFloatingText(ph.pos, "CD ${"%.1f".format(ph.abilityCooldowns[i])}s", 0xFF94A3B8.toInt(), 0.6f)
+                                return true
+                            }
+                            val cost = ab.manaCost.getOrElse((lvl - 1).coerceAtLeast(0)) { 0 }
+                            if (ph.mana < cost) {
+                                world.addFloatingText(ph.pos, "NO MANA", 0xFF3498DB.toInt(), 0.7f)
+                                return true
+                            }
+                            if (ab.targetType == TargetType.INSTANT || ab.targetType == TargetType.TOGGLE) {
+                                world.castAbility(ph, i, defaultAutoAim(ab.castRange))
+                            } else {
+                                aimPointerId = pid
+                                aimStartPos.set(c.x, c.y)
+                                aimCurrentPos.set(c.x, c.y)
+                                aimManualMoved = false
+                                aimingCancelHovered = false
+                                renderer3D.aimingAbilityIdx = i
+                                renderer3D.aimingItemSlotIdx = -1
+                                val auto = defaultAutoAim(ab.castRange)
+                                renderer3D.aimWorldPos.set(auto.x, auto.y)
+                            }
+                            return true
+                        }
+                    }
+                    if (geo.tpSlot.contains(sx, sy)) {
+                        val tpAim = world.smartTpTarget(world.playerHero, renderer3D.cameraPos, renderer3D.cameraLocked)
+                        world.useTpScroll(world.playerHero, tpAim)
+                        return true
+                    }
+                    if (hypot(sx - geo.courierCenter.x, sy - geo.courierCenter.y) <= geo.utilRadius + 8f) {
+                        world.dispatchCourier(world.playerHero)
+                        return true
+                    }
+                    if (hypot(sx - geo.glyphCenter.x, sy - geo.glyphCenter.y) <= geo.utilRadius + 8f) {
+                        world.activateGlyph(world.playerTeam)
+                        return true
+                    }
+                    for (i in 0..5) {
+                        if (geo.itemSlots[i].contains(sx, sy)) {
+                            val ph = world.playerHero
+                            val slot = ph.inventory.getOrNull(i) ?: return true
+                            val def = ItemCatalog.get(slot.itemId) ?: return true
+                            if (!def.isActive) return true
+                            if (slot.cooldownRemaining > 0f) {
+                                world.addFloatingText(ph.pos, "${def.shortCode} CD ${slot.cooldownRemaining.toInt()}s", 0xFF94A3B8.toInt(), 0.6f)
+                                return true
+                            }
+                            if (ph.mana < def.manaCost) {
+                                world.addFloatingText(ph.pos, "NO MANA", 0xFF3498DB.toInt(), 0.6f)
+                                return true
+                            }
+                            if (isAimableItem(slot.itemId)) {
+                                aimPointerId = pid
+                                aimStartPos.set(sx, sy)
+                                aimCurrentPos.set(sx, sy)
+                                aimManualMoved = false
+                                aimingCancelHovered = false
+                                renderer3D.aimingItemSlotIdx = i
+                                renderer3D.aimingAbilityIdx = -1
+                                val smart = smartItemTarget(slot.itemId)
+                                renderer3D.aimWorldPos.set(smart.x, smart.y)
+                            } else {
+                                world.useItemSlot(ph, i, ph.pos)
+                            }
+                            return true
+                        }
+                    }
+                    if (geo.heroConsole.contains(sx, sy)) {
+                        return true
+                    }
+                    if (sx < w * 0.42f && sy > h * 0.40f && joystickPointerId == -1) {
+                        joystickPointerId = pid
+                        joystickActive = true
+                        joystickBase.set(sx, sy)
+                        joystickKnob.set(sx, sy)
+                        return true
+                    }
+                    val worldPt = renderer3D.screenToWorld(sx, sy)
+                    val tappedEnemy = world.allEnemyUnits(world.playerTeam, worldPt, 95f).minByOrNull { it.pos.distTo(worldPt) }
+                    if (tappedEnemy != null) {
+                        world.playerHero.attackTargetId = tappedEnemy.id
+                        world.playerHero.attackCommandAge = 0f
+                        world.playerHero.facingAngle = world.playerHero.pos.angleTo(tappedEnemy.pos)
+                        if (tappedEnemy.pos.distTo(world.playerHero.pos) > world.playerHero.cachedAttackRange) {
+                            world.playerHero.tapMoveTarget = tappedEnemy.pos.copyVec()
+                        }
+                        world.spawnParticles(tappedEnemy.pos, 0xFFEF4444.toInt(), 6, 40f)
+                    } else if (panPointerId == -1) {
+                        panPointerId = pid
+                        panLastPos.set(sx, sy)
+                    }
                 }
-                if (geo.heroConsole.contains(sx, sy)) {
-                    return true
-                }
-                if (sx < w * 0.44f && joystickPointerId == -1) {
-                    joystickPointerId = pid
-                    joystickActive = true
-                    joystickBase.set(sx, sy)
-                    joystickKnob.set(sx, sy)
-                    return true
-                }
-                val worldPt = renderer3D.screenToWorld(sx, sy)
-                val tappedEnemy = world.allEnemyUnits(world.playerTeam, worldPt, 95f).minByOrNull { it.pos.distTo(worldPt) }
-                if (tappedEnemy != null) {
-                    world.playerHero.attackTargetId = tappedEnemy.id
-                    world.playerHero.attackCommandAge = 0f
-                    world.playerHero.facingAngle = world.playerHero.pos.angleTo(tappedEnemy.pos)
-                    world.spawnParticles(tappedEnemy.pos, 0xFFEF4444.toInt(), 6, 40f)
-                } else if (panPointerId == -1) {
-                    panPointerId = pid
-                    panLastPos.set(sx, sy)
-                }
-            }
 
-            MotionEvent.ACTION_MOVE -> {
-                for (i in 0 until event.pointerCount) {
-                    val p = event.getPointerId(i)
-                    val mx = event.getX(i)
-                    val my = event.getY(i)
-                    if (p == minimapPointerId) {
-                        panFromMinimap(mx, my)
-                    } else if (p == joystickPointerId) {
-                        val dx = mx - joystickBase.x
-                        val dy = my - joystickBase.y
-                        val dist = hypot(dx, dy)
-                        val maxR = geo.joystickRadius
-                        if (dist > 11f) {
-                            val clamped = dist.coerceAtMost(maxR)
-                            joystickKnob.set(joystickBase.x + (dx / dist) * clamped, joystickBase.y + (dy / dist) * clamped)
-                            world.playerHero.moveIntent.set(dx / dist, dy / dist)
-                        } else {
-                            joystickKnob.set(joystickBase.x, joystickBase.y)
-                            world.playerHero.moveIntent.set(0f, 0f)
-                        }
-                    } else if (p == aimPointerId && renderer3D.aimingAbilityIdx in 0..3) {
-                        aimingCancelHovered = hypot(mx - geo.cancelCenter.x, my - geo.cancelCenter.y) <= geo.cancelRadius + 28f
-                        val dx = mx - aimStartPos.x
-                        val dy = my - aimStartPos.y
-                        val dist = hypot(dx, dy)
-                        val maxR = geo.abilityRadius * 1.45f
-                        val deadzone = geo.abilityRadius * 0.52f
-                        if (dist > deadzone) {
-                            aimManualMoved = true
-                            val clamped = dist.coerceAtMost(maxR)
-                            aimCurrentPos.set(aimStartPos.x + (dx / dist) * clamped, aimStartPos.y + (dy / dist) * clamped)
-                            val ab = world.playerHero.def.abilities[renderer3D.aimingAbilityIdx]
-                            val range = ab.castRange.takeIf { it > 0f } ?: 650f
-                            val factor = if (ab.targetType == TargetType.DIRECTION_SKILLSHOT) 1.0f else (dist / 120f).coerceIn(0.20f, 1.0f)
-                            renderer3D.aimWorldPos.set(
-                                world.playerHero.pos.x + (dx / dist) * range * factor,
-                                world.playerHero.pos.y + (dy / dist) * range * factor
-                            )
-                        } else if (!aimManualMoved) {
-                            aimCurrentPos.set(mx, my)
-                        }
-                    } else if (p == aimPointerId && renderer3D.aimingItemSlotIdx >= 0) {
-                        aimingCancelHovered = hypot(mx - geo.cancelCenter.x, my - geo.cancelCenter.y) <= geo.cancelRadius + 28f
-                        val dx = mx - aimStartPos.x
-                        val dy = my - aimStartPos.y
-                        val dist = hypot(dx, dy)
-                        if (dist > 22f) {
-                            aimManualMoved = true
-                            aimCurrentPos.set(mx, my)
-                            val factor = (dist / 130f).coerceIn(0.25f, 1.0f)
-                            renderer3D.aimWorldPos.set(
-                                world.playerHero.pos.x + (dx / dist) * 850f * factor,
-                                world.playerHero.pos.y + (dy / dist) * 850f * factor
-                            )
-                        }
-                    } else if (p == panPointerId && event.pointerCount == 1) {
-                        val dx = mx - panLastPos.x
-                        val dy = my - panLastPos.y
-                        if (hypot(dx, dy) > 4f) {
-                            renderer3D.cameraLocked = false
-                            renderer3D.cameraPos.x = (renderer3D.cameraPos.x - dx * 1.5f).coerceIn(0f, MapLayout.SIZE)
-                            renderer3D.cameraPos.y = (renderer3D.cameraPos.y - dy * 1.5f).coerceIn(0f, MapLayout.SIZE)
-                            panLastPos.set(mx, my)
+                MotionEvent.ACTION_MOVE -> {
+                    for (i in 0 until event.pointerCount) {
+                        val p = event.getPointerId(i)
+                        val mx = event.getX(i)
+                        val my = event.getY(i)
+                        if (p == minimapPointerId) {
+                            panFromMinimap(mx, my)
+                        } else if (p == joystickPointerId) {
+                            val dx = mx - joystickBase.x
+                            val dy = my - joystickBase.y
+                            val dist = hypot(dx, dy)
+                            val maxR = geo.joystickRadius
+                            if (dist > 11f) {
+                                val clamped = dist.coerceAtMost(maxR)
+                                joystickKnob.set(joystickBase.x + (dx / dist) * clamped, joystickBase.y + (dy / dist) * clamped)
+                                world.playerHero.moveIntent.set(dx / dist, dy / dist)
+                            } else {
+                                joystickKnob.set(joystickBase.x, joystickBase.y)
+                                world.playerHero.moveIntent.set(0f, 0f)
+                            }
+                        } else if (p == aimPointerId && renderer3D.aimingAbilityIdx in 0..3) {
+                            aimingCancelHovered = hypot(mx - geo.cancelCenter.x, my - geo.cancelCenter.y) <= geo.cancelRadius + 32f
+                            val dx = mx - aimStartPos.x
+                            val dy = my - aimStartPos.y
+                            val dist = hypot(dx, dy)
+                            val maxR = geo.abilityRadius * 1.45f
+                            val deadzone = geo.abilityRadius * 0.45f
+                            if (dist > deadzone) {
+                                aimManualMoved = true
+                                val clamped = dist.coerceAtMost(maxR)
+                                aimCurrentPos.set(aimStartPos.x + (dx / dist) * clamped, aimStartPos.y + (dy / dist) * clamped)
+                                val ab = world.playerHero.def.abilities[renderer3D.aimingAbilityIdx]
+                                val range = ab.castRange.takeIf { it > 0f } ?: 650f
+                                val factor = if (ab.targetType == TargetType.DIRECTION_SKILLSHOT) 1.0f
+                                else ((dist - deadzone) / (maxR - deadzone).coerceAtLeast(16f)).coerceIn(0.15f, 1.0f)
+                                renderer3D.aimWorldPos.set(
+                                    world.playerHero.pos.x + (dx / dist) * range * factor,
+                                    world.playerHero.pos.y + (dy / dist) * range * factor
+                                )
+                            } else if (!aimManualMoved) {
+                                aimCurrentPos.set(mx, my)
+                            }
+                        } else if (p == aimPointerId && renderer3D.aimingItemSlotIdx >= 0) {
+                            aimingCancelHovered = hypot(mx - geo.cancelCenter.x, my - geo.cancelCenter.y) <= geo.cancelRadius + 32f
+                            val dx = mx - aimStartPos.x
+                            val dy = my - aimStartPos.y
+                            val dist = hypot(dx, dy)
+                            val maxR = geo.abilityRadius * 1.35f
+                            val deadzone = 20f
+                            if (dist > deadzone) {
+                                aimManualMoved = true
+                                val clamped = dist.coerceAtMost(maxR)
+                                aimCurrentPos.set(aimStartPos.x + (dx / dist) * clamped, aimStartPos.y + (dy / dist) * clamped)
+                                val slot = world.playerHero.inventory.getOrNull(renderer3D.aimingItemSlotIdx)
+                                val maxItemRange = if (slot?.itemId == "boots_of_travel") 2400f else 850f
+                                val factor = ((dist - deadzone) / (maxR - deadzone).coerceAtLeast(16f)).coerceIn(0.20f, 1.0f)
+                                renderer3D.aimWorldPos.set(
+                                    (world.playerHero.pos.x + (dx / dist) * maxItemRange * factor).coerceIn(0f, MapLayout.SIZE),
+                                    (world.playerHero.pos.y + (dy / dist) * maxItemRange * factor).coerceIn(0f, MapLayout.SIZE)
+                                )
+                            } else if (!aimManualMoved) {
+                                aimCurrentPos.set(mx, my)
+                            }
+                        } else if (p == panPointerId && event.pointerCount == 1) {
+                            val dx = mx - panLastPos.x
+                            val dy = my - panLastPos.y
+                            if (hypot(dx, dy) > 4f) {
+                                renderer3D.cameraLocked = false
+                                renderer3D.cameraPos.x = (renderer3D.cameraPos.x - dx * 1.5f).coerceIn(0f, MapLayout.SIZE)
+                                renderer3D.cameraPos.y = (renderer3D.cameraPos.y - dy * 1.5f).coerceIn(0f, MapLayout.SIZE)
+                                panLastPos.set(mx, my)
+                            }
                         }
                     }
                 }
-            }
 
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
-                if (pid == minimapPointerId) minimapPointerId = -1
-                if (pid == panPointerId) panPointerId = -1
-                if (pid == attackPointerId) {
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                    if (pid == minimapPointerId) minimapPointerId = -1
+                    if (pid == panPointerId) panPointerId = -1
+                    if (pid == attackPointerId) {
+                        attackPointerId = -1
+                        heldAttackMode = -1
+                        renderer3D.showAttackRangeRing = false
+                    }
+                    if (pid == joystickPointerId) {
+                        joystickPointerId = -1
+                        joystickActive = false
+                        world.playerHero.moveIntent.set(0f, 0f)
+                    }
+                    if (pid == aimPointerId) {
+                        val idxAb = renderer3D.aimingAbilityIdx
+                        val idxItem = renderer3D.aimingItemSlotIdx
+                        if (idxAb in 0..3 && !aimingCancelHovered) {
+                            world.castAbility(world.playerHero, idxAb, renderer3D.aimWorldPos)
+                        } else if (idxItem >= 0 && !aimingCancelHovered) {
+                            world.useItemSlot(world.playerHero, idxItem, renderer3D.aimWorldPos)
+                        }
+                        aimPointerId = -1
+                        aimManualMoved = false
+                        aimingCancelHovered = false
+                        renderer3D.aimingAbilityIdx = -1
+                        renderer3D.aimingItemSlotIdx = -1
+                    }
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    minimapPointerId = -1
+                    panPointerId = -1
                     attackPointerId = -1
                     heldAttackMode = -1
                     renderer3D.showAttackRangeRing = false
-                }
-                if (pid == joystickPointerId) {
                     joystickPointerId = -1
                     joystickActive = false
                     world.playerHero.moveIntent.set(0f, 0f)
-                }
-                if (pid == aimPointerId) {
-                    val idxAb = renderer3D.aimingAbilityIdx
-                    val idxItem = renderer3D.aimingItemSlotIdx
-                    if (idxAb in 0..3 && !aimingCancelHovered) {
-                        world.castAbility(world.playerHero, idxAb, renderer3D.aimWorldPos)
-                    } else if (idxItem >= 0 && !aimingCancelHovered) {
-                        world.useItemSlot(world.playerHero, idxItem, renderer3D.aimWorldPos)
-                    }
                     aimPointerId = -1
                     aimManualMoved = false
                     aimingCancelHovered = false
                     renderer3D.aimingAbilityIdx = -1
                     renderer3D.aimingItemSlotIdx = -1
                 }
-            }
-
-            MotionEvent.ACTION_CANCEL -> {
-                minimapPointerId = -1
-                panPointerId = -1
-                attackPointerId = -1
-                heldAttackMode = -1
-                renderer3D.showAttackRangeRing = false
-                joystickPointerId = -1
-                joystickActive = false
-                world.playerHero.moveIntent.set(0f, 0f)
-                aimPointerId = -1
-                aimManualMoved = false
-                aimingCancelHovered = false
-                renderer3D.aimingAbilityIdx = -1
-                renderer3D.aimingItemSlotIdx = -1
             }
         }
         return true
@@ -1212,7 +1399,7 @@ class MlbbHudOverlayView(
         val ph = world.playerHero
         return when (itemId) {
             "orchid", "scythe_of_vyse", "euls_scepter" -> defaultAutoAim(680f)
-            "boots_of_travel" -> renderer3D.cameraPos.copyVec()
+            "boots_of_travel" -> world.smartTpTarget(ph, renderer3D.cameraPos, renderer3D.cameraLocked)
             else -> ph.pos + Vec2.fromAngle(ph.facingAngle, 650f)
         }
     }
@@ -1236,10 +1423,23 @@ class MlbbHudOverlayView(
 
     private fun buildQuickBuySuggestions(): List<String> {
         val ph = world.playerHero
+        val hasAnyUpgradedBoots = ph.hasItem("power_treads") || ph.hasItem("phase_boots") ||
+            ph.hasItem("arcane_boots") || ph.hasItem("boots_of_travel")
+        val plan = when {
+            ph.def.attribute == PrimaryAttribute.INTELLIGENCE || ph.def.id == "invoker" ->
+                listOf("boots", "magic_wand", "arcane_boots", "blink_dagger", "aghanims_scepter", "bkb", "shivas_guard")
+            ph.def.isRanged ->
+                listOf("boots", "magic_wand", "power_treads", "maelstrom", "bkb", "daedalus", "butterfly")
+            else ->
+                listOf("boots", "magic_wand", "power_treads", "vanguard", "bkb", "desolator", "heart")
+        }
         return buildList {
             ph.quickBuyItemId?.let { add(it) }
-            val fallback = listOf("boots", "magic_wand", "power_treads", "bkb", "daedalus")
-            for (f in fallback) if (size < 2 && !ph.hasItem(f) && f !in this) add(f)
+            for (f in plan) {
+                if (size >= 2) break
+                if (f == "boots" && hasAnyUpgradedBoots) continue
+                if (!ph.hasItem(f) && f !in this) add(f)
+            }
         }.take(2)
     }
 }

@@ -187,7 +187,17 @@ class GameEngineTest {
 
     @Test
     fun mlbbHudGeometryHasZeroOverlapAndFitsAllPhones() {
-        val resolutions = listOf(1280f to 720f, 1600f to 720f, 1920f to 1080f, 2400f to 1080f, 2560f to 1600f)
+        val resolutions = listOf(
+            800f to 600f,
+            854f to 480f,
+            1280f to 720f,
+            1600f to 720f,
+            1920f to 1080f,
+            2340f to 1080f,
+            2400f to 1080f,
+            2560f to 1600f,
+            2208f to 1768f
+        )
         val geo = com.dota3.moba.render.HudGeometry()
         for ((w, h) in resolutions) {
             geo.layout(w, h)
@@ -218,6 +228,10 @@ class GameEngineTest {
                     assertTrue("Circles $i and $j overlap at ${w}x${h}: d=$d < $minD", d >= minD - 1f)
                 }
             }
+
+            // Top header stays clear of Quick-Buy and Shop menu
+            assertFalse("topHeader overlaps quickBuy0 at ${w}x${h}", geo.topHeader.overlaps(geo.quickBuy[0]))
+            assertFalse("topHeader overlaps shopBtn at ${w}x${h}", geo.topHeader.overlaps(geo.shopBtn))
 
             // Dota 2 Bottom Console sits cleanly between Joystick and Courier/Glyph column
             assertTrue("Console left overlaps joystick at ${w}x${h}", geo.heroConsole.left >= geo.joystickRestCenter.x + geo.joystickRadius)
@@ -311,5 +325,62 @@ class GameEngineTest {
         repeat(120) { world.step(0.05f) }
         assertTrue(world.creeps.isNotEmpty())
         assertTrue("Creeps should animate walkCycle", world.creeps.any { it.walkCycle > 0f })
+    }
+
+    @Test
+    fun courierPreservesStashWhenInventoryIsFull() {
+        val world = GameWorld("pa", mode = GameMode.ALL_PICK_5V5)
+        val ph = world.playerHero
+        ph.pos.set(2400f, 2400f)
+        ph.gold = 20000
+        while (ph.inventory.size < 6) {
+            ph.inventory.add(com.dota3.moba.engine.ItemSlot("blades_of_attack"))
+        }
+        assertTrue(world.buyItem(ph, "boots"))
+        assertEquals(1, ph.stash.size)
+        assertTrue(world.dispatchCourier(ph))
+        // Move courier to player and step until delivered/returned
+        val courier = world.couriers.first { it.heroId == ph.id }
+        courier.pos.set(ph.pos.x, ph.pos.y)
+        world.step(0.05f)
+        // Boots must NOT be deleted when inventory is full — kept safely in stash!
+        assertEquals(6, ph.inventory.size)
+        assertEquals(1, ph.stash.size)
+        assertEquals("boots", ph.stash.first().itemId)
+    }
+
+    @Test
+    fun buyItemPreservesComponentsWhenInventoryAndStashFull() {
+        val world = GameWorld("juggernaut", mode = GameMode.SANDBOX)
+        val ph = world.playerHero
+        ph.inventory.clear()
+        ph.stash.clear()
+        repeat(6) { ph.inventory.add(com.dota3.moba.engine.ItemSlot("blades_of_attack")) }
+        repeat(6) { ph.stash.add(com.dota3.moba.engine.ItemSlot("chainmail")) }
+        val goldBefore = ph.gold
+        assertFalse(world.buyItem(ph, "vanguard"))
+        assertEquals(goldBefore, ph.gold)
+        assertEquals(6, ph.inventory.size)
+        assertEquals(6, ph.stash.size)
+    }
+
+    @Test
+    fun smartTpTargetUsesFountainFromLaneAndTowerFromFountain() {
+        val world = GameWorld("juggernaut", playerTeam = Team.RADIANT, playerLane = 1, mode = GameMode.ALL_PICK_5V5)
+        val ph = world.playerHero
+        // In fountain with locked camera -> TP out to lane tower
+        val fromFountain = world.smartTpTarget(ph, ph.pos, camLocked = true)
+        assertTrue("From fountain should TP out toward lane tower", fromFountain.distTo(com.dota3.moba.engine.MapLayout.radiantFountain) > 600f)
+
+        // In lane with locked camera -> TP home to fountain
+        ph.pos.set(2400f, 2400f)
+        val fromLaneLocked = world.smartTpTarget(ph, ph.pos, camLocked = true)
+        assertTrue("From lane locked should TP to fountain", fromLaneLocked.distTo(com.dota3.moba.engine.MapLayout.radiantFountain) < 50f)
+
+        // Free cam -> TP toward cameraPos
+        val customCam = Vec2(430f, 1650f)
+        val freeCamTp = world.smartTpTarget(ph, customCam, camLocked = false)
+        assertEquals(customCam.x, freeCamTp.x, 1f)
+        assertEquals(customCam.y, freeCamTp.y, 1f)
     }
 }

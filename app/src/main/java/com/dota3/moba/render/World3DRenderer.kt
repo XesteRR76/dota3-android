@@ -4,6 +4,7 @@ import android.graphics.Color
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
+import android.util.Log
 import com.dota3.moba.core.DotaMath
 import com.dota3.moba.core.Vec2
 import com.dota3.moba.engine.*
@@ -67,6 +68,7 @@ class World3DRenderer(
     private var programId = 0
     private var uMvpLoc = 0
     private var uModelLoc = 0
+    private var uInvScaleLoc = 0
     private var uTintLoc = 0
     private var uSunDirLoc = 0
     private var uAmbientLoc = 0
@@ -89,7 +91,8 @@ class World3DRenderer(
     private var fogTexId = 0
     private var groundTexId = 0
     private var mapTexId = 0
-    private val fogPixels = ByteBuffer.allocateDirect(96 * 96)
+    private val fogGridSize = world.fogOfWar.size()
+    private val fogPixels = ByteBuffer.allocateDirect(fogGridSize * fogGridSize)
 
     private lateinit var terrainMesh: Mesh3D
     private lateinit var waterMesh: Mesh3D
@@ -117,6 +120,7 @@ class World3DRenderer(
         programId = compileProgram(VERTEX_SHADER, FRAGMENT_SHADER)
         uMvpLoc = GLES20.glGetUniformLocation(programId, "uMVP")
         uModelLoc = GLES20.glGetUniformLocation(programId, "uModel")
+        uInvScaleLoc = GLES20.glGetUniformLocation(programId, "uInvScale")
         uTintLoc = GLES20.glGetUniformLocation(programId, "uTint")
         uSunDirLoc = GLES20.glGetUniformLocation(programId, "uSunDir")
         uAmbientLoc = GLES20.glGetUniformLocation(programId, "uAmbient")
@@ -142,13 +146,13 @@ class World3DRenderer(
         groundTexId = texIds[1]
         mapTexId = texIds[2]
 
-        // Fog of War 96x96 bilinear texture
+        // Fog of War bilinear POT texture (128x128)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fogTexId)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, 96, 96, 0, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, fogPixels)
+        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, fogGridSize, fogGridSize, 0, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, fogPixels)
 
         createGroundDetailTexture(groundTexId)
         createMapAlbedoTexture(mapTexId)
@@ -199,12 +203,16 @@ class World3DRenderer(
     }
 
     private fun createMapAlbedoTexture(texId: Int) {
-        val size = 384
+        val size = 512
         val buf = ByteBuffer.allocateDirect(size * size * 4)
         val segs = ArrayList<Pair<Vec2, Vec2>>(18)
         for (lane in MapLayout.laneWaypoints) {
             for (i in 0 until lane.size - 1) segs.add(lane[i] to lane[i + 1])
         }
+        val runeSpots = listOf(
+            MapLayout.powerRuneTopPos, MapLayout.powerRuneBotPos,
+            MapLayout.bountyRuneRadiantPos, MapLayout.bountyRuneDirePos
+        )
 
         for (pz in 0 until size) {
             val wz = ((pz + 0.5f) / size) * MapLayout.SIZE
@@ -218,73 +226,83 @@ class World3DRenderer(
                 var g: Float
                 var b: Float
                 if (isRad) {
-                    r = 0.14f + nA * 0.025f + nB * 0.015f
-                    g = 0.36f + nA * 0.055f + nB * 0.020f
-                    b = 0.17f + nA * 0.020f
+                    r = 0.13f + nA * 0.025f + nB * 0.015f
+                    g = 0.37f + nA * 0.055f + nB * 0.020f
+                    b = 0.16f + nA * 0.020f
                 } else {
                     r = 0.25f + nA * 0.045f + nB * 0.018f
                     g = 0.13f + nA * 0.022f
-                    b = 0.15f + nA * 0.020f
+                    b = 0.14f + nA * 0.020f
                 }
 
-                // High ground sunlit/volcanic plateau contrast
+                // High ground sunlit/volcanic plateau + terraced cliff edge shading
                 val hg = MapLayout.highGroundFactor(wx, wz)
                 if (hg > 0.01f) {
+                    val cliffBand = if (hg in 0.06f..0.88f) 1f else 0f
                     if (isRad) {
-                        r = DotaMath.lerp(r, 0.20f, hg)
-                        g = DotaMath.lerp(g, 0.42f, hg)
-                        b = DotaMath.lerp(b, 0.23f, hg)
+                        r = DotaMath.lerp(r, 0.21f - cliffBand * 0.05f, hg)
+                        g = DotaMath.lerp(g, 0.43f - cliffBand * 0.08f, hg)
+                        b = DotaMath.lerp(b, 0.24f - cliffBand * 0.04f, hg)
                     } else {
-                        r = DotaMath.lerp(r, 0.32f, hg)
-                        g = DotaMath.lerp(g, 0.16f, hg)
-                        b = DotaMath.lerp(b, 0.17f, hg)
+                        r = DotaMath.lerp(r, 0.33f - cliffBand * 0.06f, hg)
+                        g = DotaMath.lerp(g, 0.16f - cliffBand * 0.03f, hg)
+                        b = DotaMath.lerp(b, 0.17f - cliffBand * 0.03f, hg)
                     }
                 }
 
-                // Crisp stone-paved Dota lanes with worn outer border
+                // Crisp stone-paved Dota lanes with tile seams & worn curb border
                 var minLaneDist = 9999f
                 for ((a, bPt) in segs) {
                     val d = DotaMath.distPointToSegment(wx, wz, a.x, a.y, bPt.x, bPt.y)
                     if (d < minLaneDist) minLaneDist = d
                 }
-                val roadMask = 1f - DotaMath.smoothstep(74f, 128f, minLaneDist)
+                val roadMask = 1f - DotaMath.smoothstep(76f, 130f, minLaneDist)
                 if (roadMask > 0.01f) {
-                    val stoneNoise = (sin(wx * 0.055f) * cos(wz * 0.055f)) * 0.03f
-                    val borderMask = DotaMath.smoothstep(65f, 108f, minLaneDist)
-                    val rr = (if (isRad) 0.41f else 0.31f) - borderMask * 0.08f + stoneNoise
-                    val rg = (if (isRad) 0.38f else 0.26f) - borderMask * 0.06f + stoneNoise
-                    val rb = (if (isRad) 0.31f else 0.27f) - borderMask * 0.05f + stoneNoise
+                    val cobble = (sin(wx * 0.095f) * cos(wz * 0.095f)) * 0.035f
+                    val borderMask = DotaMath.smoothstep(68f, 112f, minLaneDist)
+                    val rr = (if (isRad) 0.43f else 0.32f) - borderMask * 0.09f + cobble
+                    val rg = (if (isRad) 0.40f else 0.27f) - borderMask * 0.07f + cobble
+                    val rb = (if (isRad) 0.32f else 0.28f) - borderMask * 0.06f + cobble
                     r = DotaMath.lerp(r, rr, roadMask)
                     g = DotaMath.lerp(g, rg, roadMask)
                     b = DotaMath.lerp(b, rb, roadMask)
                 }
 
-                // Radiant & Dire Base Courtyards & Fountain Glows
+                // Radiant & Dire Base Courtyards & Fountain Sanctuaries
                 val radBaseDist = hypot(wx - MapLayout.radiantAncientPos.x, wz - MapLayout.radiantAncientPos.y)
                 if (radBaseDist < 480f) {
                     val m = 1f - DotaMath.smoothstep(290f, 480f, radBaseDist)
-                    val ringGlow = if (radBaseDist in 210f..245f) 0.14f else 0f
+                    val ringGlow = if (radBaseDist in 208f..246f) 0.16f else 0f
                     r = DotaMath.lerp(r, 0.36f, m)
-                    g = DotaMath.lerp(g, 0.44f + ringGlow, m)
-                    b = DotaMath.lerp(b, 0.38f + ringGlow, m)
+                    g = DotaMath.lerp(g, 0.45f + ringGlow, m)
+                    b = DotaMath.lerp(b, 0.39f + ringGlow, m)
                 }
                 val direBaseDist = hypot(wx - MapLayout.direAncientPos.x, wz - MapLayout.direAncientPos.y)
                 if (direBaseDist < 480f) {
                     val m = 1f - DotaMath.smoothstep(290f, 480f, direBaseDist)
-                    val ringGlow = if (direBaseDist in 210f..245f) 0.20f else 0f
-                    r = DotaMath.lerp(r, 0.28f + ringGlow, m)
+                    val ringGlow = if (direBaseDist in 208f..246f) 0.22f else 0f
+                    r = DotaMath.lerp(r, 0.29f + ringGlow, m)
                     g = DotaMath.lerp(g, 0.16f, m)
                     b = DotaMath.lerp(b, 0.18f, m)
                 }
 
-                // Roshan Pit Arena & Neutral Camp Clearings
+                // Roshan Pit Arena, Rune Circles & Neutral Camp Clearings
                 val roshDist = hypot(wx - MapLayout.roshanPitPos.x, wz - MapLayout.roshanPitPos.y)
-                if (roshDist < 240f) {
-                    val m = 1f - DotaMath.smoothstep(140f, 240f, roshDist)
-                    val pitRing = if (roshDist in 150f..175f) 0.12f else 0f
+                if (roshDist < 245f) {
+                    val m = 1f - DotaMath.smoothstep(140f, 245f, roshDist)
+                    val pitRing = if (roshDist in 150f..178f) 0.16f else 0f
                     r = DotaMath.lerp(r, 0.26f + pitRing, m)
-                    g = DotaMath.lerp(g, 0.20f + pitRing * 0.4f, m)
-                    b = DotaMath.lerp(b, 0.18f, m)
+                    g = DotaMath.lerp(g, 0.19f + pitRing * 0.35f, m)
+                    b = DotaMath.lerp(b, 0.17f, m)
+                }
+                for (rs in runeSpots) {
+                    val rd = hypot(wx - rs.x, wz - rs.y)
+                    if (rd < 90f && rd > 52f) {
+                        val ringM = 1f - abs(rd - 70f) / 20f
+                        r = DotaMath.lerp(r, 0.24f, ringM * 0.6f)
+                        g = DotaMath.lerp(g, 0.44f, ringM * 0.6f)
+                        b = DotaMath.lerp(b, 0.56f, ringM * 0.6f)
+                    }
                 }
                 for (camp in MapLayout.neutralCamps) {
                     val cd = hypot(wx - camp.pos.x, wz - camp.pos.y)
@@ -296,17 +314,17 @@ class World3DRenderer(
                     }
                 }
 
-                // Riverbed sand & pebbles
+                // Riverbed sand, pebbles & stone ford mid-crossing
                 val rDist = MapLayout.riverDistance(wx, wz)
                 if (rDist < 210f) {
                     val bankMask = 1f - DotaMath.smoothstep(130f, 205f, rDist)
                     val deepMask = 1f - DotaMath.smoothstep(60f, 145f, rDist)
-                    r = DotaMath.lerp(r, 0.34f, bankMask * 0.7f)
-                    g = DotaMath.lerp(g, 0.32f, bankMask * 0.7f)
-                    b = DotaMath.lerp(b, 0.25f, bankMask * 0.7f)
+                    r = DotaMath.lerp(r, 0.36f, bankMask * 0.72f)
+                    g = DotaMath.lerp(g, 0.33f, bankMask * 0.72f)
+                    b = DotaMath.lerp(b, 0.25f, bankMask * 0.72f)
                     r = DotaMath.lerp(r, 0.10f, deepMask)
-                    g = DotaMath.lerp(g, 0.23f, deepMask)
-                    b = DotaMath.lerp(b, 0.29f, deepMask)
+                    g = DotaMath.lerp(g, 0.24f, deepMask)
+                    b = DotaMath.lerp(b, 0.31f, deepMask)
                 }
 
                 buf.put((r.coerceIn(0f, 1f) * 255f).toInt().toByte())
@@ -337,11 +355,17 @@ class World3DRenderer(
         val dt = ((now - lastFrameNs) / 1_000_000_000f).coerceIn(0.001f, 0.05f)
         lastFrameNs = now
 
-        onFrameStep(dt)
-
-        if (cameraLocked) {
-            cameraPos.x = DotaMath.lerp(cameraPos.x, world.playerHero.pos.x, 0.22f)
-            cameraPos.y = DotaMath.lerp(cameraPos.y, world.playerHero.pos.y, 0.22f)
+        val curGameTime: Float
+        val curIsNight: Boolean
+        synchronized(world) {
+            onFrameStep(dt)
+            if (cameraLocked) {
+                cameraPos.x = DotaMath.lerp(cameraPos.x, world.playerHero.pos.x, 0.22f)
+                cameraPos.y = DotaMath.lerp(cameraPos.y, world.playerHero.pos.y, 0.22f)
+            }
+            curGameTime = world.gameTime
+            curIsNight = world.isNight
+            copyFogPixels()
         }
 
         val targetY = terrainHeight(cameraPos.x, cameraPos.y)
@@ -377,10 +401,10 @@ class World3DRenderer(
         GLES20.glUniform1i(uMapTexLoc, 2)
 
         GLES20.glUniform1f(uMapSizeLoc, MapLayout.SIZE)
-        GLES20.glUniform1f(uTimeLoc, world.gameTime)
+        GLES20.glUniform1f(uTimeLoc, curGameTime)
         GLES20.glUniform3f(uCamPosLoc, eyeX, eyeY, eyeZ)
 
-        if (world.isNight) {
+        if (curIsNight) {
             GLES20.glUniform3f(uSunDirLoc, -0.35f, 0.85f, -0.38f)
             GLES20.glUniform3f(uAmbientLoc, 0.34f, 0.40f, 0.58f)
         } else {
@@ -401,7 +425,7 @@ class World3DRenderer(
         GLES20.glUniform1i(uUseGroundTexLoc, 0)
         GLES20.glUniform1i(uUseMapTexLoc, 0)
         GLES20.glUniform1i(uWaterModeLoc, 1)
-        val waveOffset = sin(world.gameTime * 2.0f) * 1.4f
+        val waveOffset = sin(curGameTime * 2.0f) * 1.4f
         Matrix.setIdentityM(modelMatrix, 0)
         Matrix.translateM(modelMatrix, 0, MapLayout.SIZE * 0.5f, -10.5f + waveOffset, MapLayout.SIZE * 0.5f)
         GLES20.glUniform1f(uAlphaLoc, 0.78f)
@@ -412,6 +436,16 @@ class World3DRenderer(
 
         val bars = ArrayList<ProjectedBar>(48)
         val texts = ArrayList<ProjectedText>(32)
+
+        synchronized(world) {
+            drawDynamicWorld(bars, texts)
+        }
+
+        projectedBars = bars
+        projectedTexts = texts
+    }
+
+    private fun drawDynamicWorld(bars: MutableList<ProjectedBar>, texts: MutableList<ProjectedText>) {
 
         // 3. Fountains (Glowing Healing Sanctuary Rings)
         drawFountain3D(MapLayout.radiantFountain, isRadiant = true)
@@ -615,9 +649,6 @@ class World3DRenderer(
                 texts.add(ProjectedText(sx, sy, ft.text, ft.color, ft.scale))
             }
         }
-
-        projectedBars = bars
-        projectedTexts = texts
     }
 
     private fun drawFountain3D(pos: Vec2, isRadiant: Boolean) {
@@ -640,19 +671,25 @@ class World3DRenderer(
             GLES20.glUniform1f(uAlphaLoc, 1.0f)
         }
 
-        // Stepped stone foundation + 4 corner buttresses
-        val baseCol = if (isRad) Triple(0.30f, 0.34f, 0.34f) else Triple(0.22f, 0.18f, 0.21f)
-        drawPart(cylMesh, t.pos.x, h + 12f, t.pos.y, 88f, 24f, 88f, 0f, baseCol.first, baseCol.second, baseCol.third)
-        drawPart(limbMesh, t.pos.x, h + 58f, t.pos.y, 54f, 70f, 54f, 0f, baseCol.first * 1.15f, baseCol.second * 1.15f, baseCol.third * 1.15f)
+        // Stepped stone foundation + 4 corner buttresses (marble for Radiant, volcanic spikes for Dire)
+        val baseCol = if (isRad) Triple(0.36f, 0.40f, 0.39f) else Triple(0.22f, 0.16f, 0.19f)
+        drawPart(cylMesh, t.pos.x, h + 12f, t.pos.y, 90f, 24f, 90f, 0f, baseCol.first, baseCol.second, baseCol.third)
+        drawPart(limbMesh, t.pos.x, h + 58f, t.pos.y, 52f, 70f, 52f, 0f, baseCol.first * 1.15f, baseCol.second * 1.15f, baseCol.third * 1.15f)
         for (k in 0..3) {
             val a = k * 90f + 45f
             val rad = Math.toRadians(a.toDouble()).toFloat()
-            drawPart(boxMesh, t.pos.x + cos(rad) * 30f, h + 36f, t.pos.y + sin(rad) * 30f, 14f, 44f, 14f, a, baseCol.first * 0.9f, baseCol.second * 0.9f, baseCol.third * 0.9f)
+            val bx = t.pos.x + cos(rad) * 32f
+            val bz = t.pos.y + sin(rad) * 32f
+            drawPart(boxMesh, bx, h + 38f, bz, 14f, 48f, 14f, a, baseCol.first * 0.9f, baseCol.second * 0.9f, baseCol.third * 0.9f)
+            if (!isRad) {
+                drawPartTilt(coneMesh, bx, h + 68f, bz, 10f, 20f, 10f, 0f, a, -16f, 0.65f, 0.14f, 0.12f)
+            }
         }
-        // Crown & Glowing Crystal Core
-        drawPart(torusMesh, t.pos.x, h + 94f, t.pos.y, 38f, 36f, 38f, world.gameTime * 45f, r, g, b)
+        // Crown & Glowing Crystal Core (pulses brighter on shot!)
+        val shotPulse = if (t.attackCooldown > 0.72f) 1.28f else 1.0f
+        drawPart(torusMesh, t.pos.x, h + 94f, t.pos.y, 40f * shotPulse, 36f, 40f * shotPulse, world.gameTime * 55f, r, g, b)
         val bob = sin(world.gameTime * 3.0f + t.pos.x) * 6f
-        drawPart(crystalMesh, t.pos.x, h + 126f + bob, t.pos.y, 38f, 54f, 38f, world.gameTime * 65f, r, g, b)
+        drawPart(crystalMesh, t.pos.x, h + 126f + bob, t.pos.y, 40f * shotPulse, 56f * shotPulse, 40f * shotPulse, world.gameTime * 65f, r, g, b)
 
         if (t.fortifyTimer > 0f) {
             GLES20.glUniform1f(uAlphaLoc, 0.38f)
@@ -728,23 +765,26 @@ class World3DRenderer(
         GLES20.glUniform1f(uAlphaLoc, 1.0f)
 
         if (c.type == CreepType.SIEGE) {
-            // Siege Catapult
-            drawPart(boxMesh, c.pos.x, h + 15f * sc, c.pos.y, 26f * sc, 14f * sc, 34f * sc, cAngleDeg, 0.42f, 0.28f, 0.16f)
+            // Siege Catapult with animated rolling wheels & launch arm
+            val wheelBob = abs(sin(c.walkCycle)) * 2f
+            drawPart(boxMesh, c.pos.x, h + (15f + wheelBob) * sc, c.pos.y, 26f * sc, 14f * sc, 34f * sc, cAngleDeg, 0.44f, 0.29f, 0.17f)
             drawPartTilt(cylMesh, c.pos.x - rx * 15f * sc, h + 10f * sc, c.pos.y - rz * 15f * sc, 16f * sc, 6f * sc, 16f * sc, 0f, cAngleDeg, 90f, 0.25f, 0.20f, 0.16f)
             drawPartTilt(cylMesh, c.pos.x + rx * 15f * sc, h + 10f * sc, c.pos.y + rz * 15f * sc, 16f * sc, 6f * sc, 16f * sc, 0f, cAngleDeg, 90f, 0.25f, 0.20f, 0.16f)
             val armTilt = if (c.attackAnimTimer > 0f) -45f else 25f
             drawPartTilt(boxMesh, c.pos.x, h + 28f * sc, c.pos.y, 5f * sc, 26f * sc, 5f * sc, armTilt, cAngleDeg, 0f, r, g, b)
             drawPart(sphereMesh, c.pos.x + cosA * 10f * sc, h + 38f * sc, c.pos.y + sinA * 10f * sc, 12f * sc, 12f * sc, 12f * sc, 0f, r, g, b)
         } else if (c.type == CreepType.RANGED) {
-            // Ranged Mage Creep
-            drawPart(coneMesh, c.pos.x, h + 20f * sc, c.pos.y, 24f * sc, 38f * sc, 24f * sc, cAngleDeg, r * 0.85f, g * 0.85f, b * 0.85f)
-            drawPart(sphereMesh, c.pos.x, h + 42f * sc, c.pos.y, 14f * sc, 14f * sc, 14f * sc, cAngleDeg, 0.85f, 0.78f, 0.70f)
-            drawPart(coneMesh, c.pos.x, h + 50f * sc, c.pos.y, 18f * sc, 16f * sc, 18f * sc, cAngleDeg, r, g, b)
-            // Crystal Staff
+            // Ranged Mage Creep with robe glide & glowing crystal staff
+            val glide = abs(sin(c.walkCycle)) * 2.8f * sc
+            val staffThrust = if (c.attackAnimTimer > 0f) 18f else 0f
+            drawPart(coneMesh, c.pos.x, h + 20f * sc + glide, c.pos.y, 24f * sc, 38f * sc, 24f * sc, cAngleDeg, r * 0.85f, g * 0.85f, b * 0.85f)
+            drawPart(sphereMesh, c.pos.x, h + 42f * sc + glide, c.pos.y, 14f * sc, 14f * sc, 14f * sc, cAngleDeg, 0.85f, 0.78f, 0.70f)
+            drawPart(coneMesh, c.pos.x, h + 50f * sc + glide, c.pos.y, 18f * sc, 16f * sc, 18f * sc, cAngleDeg, r, g, b)
+            // Angled Crystal Staff
             val staffX = c.pos.x + rx * 12f * sc + cosA * 10f * sc
             val staffZ = c.pos.y + rz * 12f * sc + sinA * 10f * sc
-            drawPart(cylMesh, staffX, h + 26f * sc, staffZ, 4f * sc, 42f * sc, 4f * sc, 0f, 0.45f, 0.30f, 0.18f)
-            drawPart(crystalMesh, staffX, h + 50f * sc, staffZ, 11f * sc, 14f * sc, 11f * sc, world.gameTime * 90f, r, g, b)
+            drawPartTilt(cylMesh, staffX, h + 26f * sc + glide, staffZ, 4f * sc, 42f * sc, 4f * sc, 16f + staffThrust, cAngleDeg, 0f, 0.45f, 0.30f, 0.18f)
+            drawPart(crystalMesh, staffX + cosA * 7f * sc, h + 49f * sc + glide, staffZ + sinA * 7f * sc, 12f * sc, 15f * sc, 12f * sc, world.gameTime * 90f, r, g, b)
         } else {
             // Melee Creep with walking legs, shield & swinging sword
             val stride = sin(c.walkCycle) * 7f * sc
@@ -985,73 +1025,87 @@ class World3DRenderer(
         }
 
         // Left & Right Arms + Hero-Specific Weapons + Curved Slash Arcs
-        val castLift = if (casting) -28f else 0f
-        val swingAngle = if (swinging) hero.facingAngle + (-1.15f + atkProg * 2.3f) else hero.facingAngle + 0.32f
+        val castLift = if (casting) -32f else 0f
+        val swingAngle = if (swinging) hero.facingAngle + (-1.05f + atkProg * 2.1f) else hero.facingAngle + 0.35f
         val wRotDeg = -Math.toDegrees(swingAngle.toDouble()).toFloat() + 90f
-        val armDist = 22f * sc
-        val wx = hx + cos(swingAngle) * armDist
-        val wz = hz + sin(swingAngle) * armDist
+        val handCos = cos(swingAngle)
+        val handSin = sin(swingAngle)
+        // Anchor weapon near right shoulder/hand, sweeping smoothly across front arc during melee swing
+        val handX = hx + rx * (pSpread * 0.55f) + handCos * (20f * sc)
+        val handZ = hz + rz * (pSpread * 0.55f) + handSin * (20f * sc)
+        val swingPitch = if (swinging) -25f + atkProg * 75f else 18f
 
         // Left arm swinging opposite to legs
         drawPartTilt(limbMesh, hx - rx * (pSpread + 2f * sc), bodyY - 2f * sc, hz - rz * (pSpread + 2f * sc),
             9f * sc, 24f * sc, 9f * sc, walkSwing * 2.2f + castLift, angleDeg, 0f, skinCol.first * 0.9f, skinCol.second * 0.9f, skinCol.third * 0.9f)
-        // Right weapon arm
+        // Right weapon arm reaching toward hand
         drawPartTilt(limbMesh, hx + rx * (pSpread + 2f * sc), bodyY - 2f * sc, hz + rz * (pSpread + 2f * sc),
-            9f * sc, 24f * sc, 9f * sc, -walkSwing * 2.2f + castLift, wRotDeg, 0f, skinCol.first * 0.9f, skinCol.second * 0.9f, skinCol.third * 0.9f)
+            9f * sc, 24f * sc, 9f * sc, -walkSwing * 2.2f + castLift - (if (swinging) 30f else 12f), wRotDeg, 0f, skinCol.first * 0.9f, skinCol.second * 0.9f, skinCol.third * 0.9f)
 
         when (hero.def.id) {
             "juggernaut" -> {
-                // Curved Samurai Katana
-                drawPart(bladeMesh, wx, bodyY - 2f * sc, wz, 42f * sc, 46f * sc, 56f * sc, wRotDeg, 0.98f, 0.88f, 0.56f)
+                // Curved Samurai Katana + Golden Guard
+                drawPart(boxMesh, handX, bodyY - 1f * sc, handZ, 12f * sc, 4f * sc, 4f * sc, wRotDeg, 0.95f, 0.78f, 0.22f)
+                drawPart(bladeMesh, handX, bodyY - 1f * sc, handZ, 44f * sc, 48f * sc, 60f * sc, wRotDeg, 0.98f, 0.90f, 0.62f)
             }
             "pa", "antimage" -> {
                 // Dual Curved Crescent Warglaives
-                drawPart(bladeMesh, wx, bodyY, wz, 38f * sc, 42f * sc, 46f * sc, wRotDeg, ar, ag, ab)
-                drawPart(bladeMesh, hx - rx * 18f * sc + cosA * 10f, bodyY, hz - rz * 18f * sc + sinA * 10f,
-                    38f * sc, 42f * sc, 46f * sc, angleDeg + 18f, ar, ag, ab)
+                drawPart(bladeMesh, handX, bodyY, handZ, 42f * sc, 44f * sc, 50f * sc, wRotDeg, ar, ag, ab)
+                drawPart(bladeMesh, hx - rx * 18f * sc + cosA * 8f, bodyY, hz - rz * 18f * sc + sinA * 8f,
+                    42f * sc, 44f * sc, 50f * sc, angleDeg + 18f, ar, ag, ab)
             }
             "sniper" -> {
-                // Long Scoped Sniper Rifle
-                drawPart(boxMesh, hx + cosA * 28f * sc, bodyY + 4f * sc, hz + sinA * 28f * sc, 6f * sc, 7f * sc, 58f * sc, angleDeg, 0.24f, 0.22f, 0.20f)
-                drawPart(cylMesh, hx + cosA * 22f * sc, bodyY + 10f * sc, hz + sinA * 22f * sc, 5f * sc, 18f * sc, 5f * sc, angleDeg, 0.95f, 0.78f, 0.16f)
+                // Long Scoped Sniper Rifle + Wooden Stock + Brass Scope
+                drawPart(boxMesh, hx + cosA * 18f * sc + rx * 6f * sc, bodyY + 2f * sc, hz + sinA * 18f * sc + rz * 6f * sc,
+                    7f * sc, 9f * sc, 24f * sc, angleDeg, 0.45f, 0.28f, 0.14f)
+                drawPart(boxMesh, hx + cosA * 34f * sc + rx * 6f * sc, bodyY + 4f * sc, hz + sinA * 34f * sc + rz * 6f * sc,
+                    5f * sc, 6f * sc, 46f * sc, angleDeg, 0.20f, 0.22f, 0.25f)
+                drawPartTilt(cylMesh, hx + cosA * 24f * sc + rx * 6f * sc, bodyY + 10f * sc, hz + sinA * 24f * sc + rz * 6f * sc,
+                    6f * sc, 20f * sc, 6f * sc, 90f, angleDeg, 0f, 0.95f, 0.78f, 0.16f)
                 if (swinging) {
-                    drawPart(crystalMesh, hx + cosA * 58f * sc, bodyY + 4f * sc, hz + sinA * 58f * sc, 16f * sc, 16f * sc, 22f * sc, angleDeg, 1.0f, 0.90f, 0.25f)
+                    drawPart(crystalMesh, hx + cosA * 59f * sc + rx * 6f * sc, bodyY + 4f * sc, hz + sinA * 59f * sc + rz * 6f * sc,
+                        18f * sc, 18f * sc, 24f * sc, angleDeg, 1.0f, 0.92f, 0.30f)
                 }
             }
             "axe" -> {
-                // Giant Twin-Bit Red Mist Axe
-                drawPart(boxMesh, wx + cos(swingAngle) * 14f, bodyY + 2f * sc, wz + sin(swingAngle) * 14f, 5f * sc, 5f * sc, 48f * sc, wRotDeg, 0.45f, 0.28f, 0.16f)
-                drawPart(crystalMesh, wx + cos(swingAngle) * 32f, bodyY + 2f * sc, wz + sin(swingAngle) * 32f, 34f * sc, 14f * sc, 26f * sc, wRotDeg, 0.92f, 0.22f, 0.18f)
+                // Giant Twin-Bit Red Mist Battleaxe
+                drawPartTilt(cylMesh, handX + handCos * 16f, bodyY + 2f * sc, handZ + handSin * 16f, 5f * sc, 54f * sc, 5f * sc, 80f, wRotDeg, 0f, 0.45f, 0.28f, 0.16f)
+                drawPartTilt(boxMesh, handX + handCos * 34f, bodyY + 4f * sc, handZ + handSin * 34f, 38f * sc, 6f * sc, 20f * sc, 0f, wRotDeg, swingPitch * 0.3f, 0.88f, 0.20f, 0.16f)
+                drawPart(boxMesh, handX + handCos * 34f, bodyY + 4f * sc, handZ + handSin * 34f, 44f * sc, 3f * sc, 12f * sc, wRotDeg, 0.95f, 0.88f, 0.85f)
             }
             "earthshaker" -> {
-                // Massive Enchanted Stone Totem
+                // Massive Enchanted Stone Totem (tilted forward and slammed on swing!)
                 val tGlow = if (hero.enchantTotemBuff) 1.0f else 0.0f
-                drawPart(limbMesh, wx + cos(swingAngle) * 16f, bodyY + 8f * sc, wz + sin(swingAngle) * 16f,
-                    16f * sc, 52f * sc, 16f * sc, wRotDeg, 0.45f + tGlow * 0.55f, 0.34f + tGlow * 0.50f, 0.22f)
+                val totemPitch = if (swinging) 32f + atkProg * 58f else 28f
+                drawPartTilt(limbMesh, handX + handCos * 14f, bodyY + 6f * sc, handZ + handSin * 14f,
+                    16f * sc, 56f * sc, 16f * sc, totemPitch, wRotDeg, 0f, 0.45f + tGlow * 0.55f, 0.34f + tGlow * 0.50f, 0.22f)
                 if (hero.enchantTotemBuff) {
-                    drawPart(torusMesh, wx + cos(swingAngle) * 16f, bodyY + 18f * sc, wz + sin(swingAngle) * 16f,
+                    drawPart(torusMesh, handX + handCos * 20f, bodyY + 14f * sc, handZ + handSin * 20f,
                         28f * sc, 24f * sc, 28f * sc, world.gameTime * 140f, 1.0f, 0.82f, 0.15f)
                 }
             }
             "cm", "invoker" -> {
-                // Ornate Crystal / Arcane Mage Staff
-                val stX = wx + cos(swingAngle) * 10f; val stZ = wz + sin(swingAngle) * 10f
-                drawPart(cylMesh, stX, bodyY + 6f * sc, stZ, 5f * sc, 60f * sc, 5f * sc, 0f, 0.50f, 0.35f, 0.22f)
-                drawPart(crystalMesh, stX, bodyY + 40f * sc, stZ, 16f * sc, 24f * sc, 16f * sc, world.gameTime * 90f, ar, ag, ab)
+                // Ornate Angled Crystal / Arcane Mage Staff
+                val stX = handX + handCos * 8f; val stZ = handZ + handSin * 8f
+                drawPartTilt(cylMesh, stX, bodyY + 6f * sc, stZ, 5f * sc, 60f * sc, 5f * sc, 24f, wRotDeg, 0f, 0.50f, 0.35f, 0.22f)
+                drawPart(crystalMesh, stX + handCos * 12f * sc, bodyY + 34f * sc, stZ + handSin * 12f * sc,
+                    17f * sc, 26f * sc, 17f * sc, world.gameTime * 90f, ar, ag, ab)
             }
             "pudge" -> {
-                // Meat Cleaver + Curved Butcher Hook
-                drawPart(boxMesh, wx + cos(swingAngle) * 14f, bodyY, wz + sin(swingAngle) * 14f, 8f * sc, 16f * sc, 34f * sc, wRotDeg, 0.80f, 0.82f, 0.86f)
-                drawPart(bladeMesh, hx - rx * 18f * sc, bodyY, hz - rz * 18f * sc, 34f * sc, 34f * sc, 34f * sc, angleDeg + 35f, 0.78f, 0.22f, 0.20f)
+                // Stitched Belly Patch + Meat Cleaver + Curved Butcher Hook
+                drawPart(boxMesh, hx + cosA * 11f * sc, bodyY - 2f * sc, hz + sinA * 11f * sc, 18f * sc, 14f * sc, 4f * sc, angleDeg, 0.72f, 0.52f, 0.44f)
+                drawPart(boxMesh, handX + handCos * 12f, bodyY, handZ + handSin * 12f, 6f * sc, 18f * sc, 36f * sc, wRotDeg, 0.82f, 0.84f, 0.88f)
+                drawPart(bladeMesh, hx - rx * 18f * sc + cosA * 6f, bodyY, hz - rz * 18f * sc + sinA * 6f, 40f * sc, 40f * sc, 40f * sc, angleDeg + 35f, 0.82f, 0.24f, 0.20f)
             }
             "zeus" -> {
-                // Crackling Golden Thunderbolt
-                drawPart(crystalMesh, wx + cos(swingAngle) * 14f, bodyY + 6f * sc, wz + sin(swingAngle) * 14f, 14f * sc, 44f * sc, 14f * sc, wRotDeg, 1.0f, 0.90f, 0.22f)
+                // Crackling Angled Golden Thunderbolt
+                drawPartTilt(crystalMesh, handX + handCos * 12f, bodyY + 8f * sc, handZ + handSin * 12f,
+                    15f * sc, 48f * sc, 15f * sc, 38f, wRotDeg, 0f, 1.0f, 0.90f, 0.22f)
             }
             else -> {
-                // Void Spirit / Chronos Halberd
-                drawPart(cylMesh, wx + cos(swingAngle) * 14f, bodyY + 2f * sc, wz + sin(swingAngle) * 14f, 5f * sc, 54f * sc, 5f * sc, wRotDeg, 0.35f, 0.35f, 0.40f)
-                drawPart(bladeMesh, wx + cos(swingAngle) * 20f, bodyY + 22f * sc, wz + sin(swingAngle) * 20f, 36f * sc, 36f * sc, 40f * sc, wRotDeg, ar, ag, ab)
+                // Void Spirit / Chronos Astral Halberd (tilted forward for thrust/slash)
+                drawPartTilt(cylMesh, handX + handCos * 10f, bodyY + 4f * sc, handZ + handSin * 10f, 5f * sc, 56f * sc, 5f * sc, 42f, wRotDeg, 0f, 0.38f, 0.38f, 0.44f)
+                drawPart(bladeMesh, handX + handCos * 20f, bodyY + 14f * sc, handZ + handSin * 20f, 40f * sc, 40f * sc, 46f * sc, wRotDeg, ar, ag, ab)
             }
         }
 
@@ -1203,7 +1257,11 @@ class World3DRenderer(
         Matrix.translateM(modelMatrix, 0, x, y, z)
         if (rotYDeg != 0f) Matrix.rotateM(modelMatrix, 0, rotYDeg, 0f, 1f, 0f)
         Matrix.scaleM(modelMatrix, 0, sx, sy, sz)
-        drawMesh(mesh, r, g, b)
+        val ax = abs(sx).coerceAtLeast(0.001f)
+        val ay = abs(sy).coerceAtLeast(0.001f)
+        val az = abs(sz).coerceAtLeast(0.001f)
+        val maxS = maxOf(ax, maxOf(ay, az))
+        drawMesh(mesh, r, g, b, maxS / ax, maxS / ay, maxS / az)
     }
 
     private fun drawPartTilt(
@@ -1219,19 +1277,28 @@ class World3DRenderer(
         if (rotXDeg != 0f) Matrix.rotateM(modelMatrix, 0, rotXDeg, 1f, 0f, 0f)
         if (rotZDeg != 0f) Matrix.rotateM(modelMatrix, 0, rotZDeg, 0f, 0f, 1f)
         Matrix.scaleM(modelMatrix, 0, sx, sy, sz)
-        drawMesh(mesh, r, g, b)
+        val ax = abs(sx).coerceAtLeast(0.001f)
+        val ay = abs(sy).coerceAtLeast(0.001f)
+        val az = abs(sz).coerceAtLeast(0.001f)
+        val maxS = maxOf(ax, maxOf(ay, az))
+        drawMesh(mesh, r, g, b, maxS / ax, maxS / ay, maxS / az)
     }
 
-    private fun drawMesh(mesh: Mesh3D, r: Float, g: Float, b: Float) {
+    private fun drawMesh(
+        mesh: Mesh3D,
+        r: Float, g: Float, b: Float,
+        relInvSx: Float = 1f, relInvSy: Float = 1f, relInvSz: Float = 1f
+    ) {
         Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, modelMatrix, 0)
         GLES20.glUniformMatrix4fv(uMvpLoc, 1, false, mvpMatrix, 0)
         GLES20.glUniformMatrix4fv(uModelLoc, 1, false, modelMatrix, 0)
+        GLES20.glUniform3f(uInvScaleLoc, relInvSx, relInvSy, relInvSz)
         GLES20.glUniform3f(uTintLoc, r, g, b)
         mesh.draw(aPosLoc, aNormLoc, aColLoc)
     }
 
-    private fun uploadFogTexture() {
-        val n = world.fogOfWar.size()
+    private fun copyFogPixels() {
+        val n = fogGridSize
         fogPixels.position(0)
         for (gy in 0 until n) {
             for (gx in 0 until n) {
@@ -1244,9 +1311,12 @@ class World3DRenderer(
             }
         }
         fogPixels.position(0)
+    }
+
+    private fun uploadFogTexture() {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fogTexId)
-        GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, 96, 96, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, fogPixels)
+        GLES20.glTexSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, fogGridSize, fogGridSize, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, fogPixels)
     }
 
     private fun projectToScreen(wx: Float, wy: Float, wz: Float): Pair<Float, Float>? {
@@ -1310,6 +1380,11 @@ class World3DRenderer(
             val s = GLES20.glCreateShader(type)
             GLES20.glShaderSource(s, src)
             GLES20.glCompileShader(s)
+            val status = IntArray(1)
+            GLES20.glGetShaderiv(s, GLES20.GL_COMPILE_STATUS, status, 0)
+            if (status[0] == 0) {
+                Log.e("World3DRenderer", "Shader compile error: ${GLES20.glGetShaderInfoLog(s)}")
+            }
             return s
         }
         val vs = compileShader(GLES20.GL_VERTEX_SHADER, vsSrc)
@@ -1318,13 +1393,20 @@ class World3DRenderer(
         GLES20.glAttachShader(prog, vs)
         GLES20.glAttachShader(prog, fs)
         GLES20.glLinkProgram(prog)
+        val linkStatus = IntArray(1)
+        GLES20.glGetProgramiv(prog, GLES20.GL_LINK_STATUS, linkStatus, 0)
+        if (linkStatus[0] == 0) {
+            Log.e("World3DRenderer", "Program link error: ${GLES20.glGetProgramInfoLog(prog)}")
+        }
         return prog
     }
 
     companion object {
         private const val VERTEX_SHADER = """
+            precision highp float;
             uniform mat4 uMVP;
             uniform mat4 uModel;
+            uniform vec3 uInvScale;
             attribute vec3 aPos;
             attribute vec3 aNorm;
             attribute vec3 aCol;
@@ -1334,14 +1416,18 @@ class World3DRenderer(
             void main() {
                 vec4 wp = uModel * vec4(aPos, 1.0);
                 vWorldPos = wp.xyz;
-                vNorm = normalize(mat3(uModel) * aNorm);
+                vNorm = normalize(mat3(uModel) * (aNorm * uInvScale * uInvScale));
                 vCol = aCol;
                 gl_Position = uMVP * vec4(aPos, 1.0);
             }
         """
 
         private const val FRAGMENT_SHADER = """
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+            precision highp float;
+            #else
             precision mediump float;
+            #endif
             uniform vec3 uTint;
             uniform vec3 uSunDir;
             uniform vec3 uAmbient;
@@ -1381,15 +1467,17 @@ class World3DRenderer(
                 }
 
                 if (uWaterMode == 1) {
-                    float w1 = sin(vWorldPos.x * 0.045 + uTime * 2.6 + vWorldPos.z * 0.025);
-                    float w2 = cos(vWorldPos.z * 0.052 - uTime * 2.1 + vWorldPos.x * 0.020);
+                    float diag = (vWorldPos.x + vWorldPos.z) * 0.032 - uTime * 2.2;
+                    float across = (vWorldPos.x - vWorldPos.z) * 0.048 + uTime * 1.3;
+                    float w1 = sin(diag + sin(across) * 0.8);
+                    float w2 = cos(across * 1.15 - uTime * 1.8);
                     float wave = (w1 + w2) * 0.5;
-                    lit += vec3(0.05, 0.14, 0.20) * wave;
-                    float glint = pow(max(wave, 0.001), 3.0) * 0.32;
-                    lit += vec3(0.65, 0.88, 1.0) * glint;
+                    lit += vec3(0.05, 0.15, 0.22) * wave;
+                    float glint = pow(max(wave, 0.001), 3.0) * 0.35;
+                    lit += vec3(0.68, 0.90, 1.0) * glint;
                 } else if (uUseMapTex == 0) {
                     float rim = pow(max(1.0 - max(dot(N, V), 0.0), 0.001), 2.6);
-                    lit += baseColor * rim * 0.42;
+                    lit += baseColor * rim * 0.40;
                 }
 
                 if (uUseFog == 1) {

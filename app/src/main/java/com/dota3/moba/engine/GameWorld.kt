@@ -48,7 +48,7 @@ class GameWorld(
     var radiantGlyphCd: Float = 0f
     var direGlyphCd: Float = 0f
 
-    val fogOfWar = FogOfWar(96)
+    val fogOfWar = FogOfWar(128)
     val trees: MutableList<TreeNode> = MapLayout.generateTrees()
     val heroes: MutableList<HeroEntity> = mutableListOf()
     val creeps: MutableList<CreepEntity> = mutableListOf()
@@ -582,7 +582,9 @@ class GameWorld(
                 } else if ((abs(h.moveIntent.x) > 0.1f || abs(h.moveIntent.y) > 0.1f) && h.attackCommandAge > 0.40f) {
                     val toTgt = (lockTgt.pos - h.pos).normalized()
                     val mv = h.moveIntent.normalized()
-                    if (toTgt.x * mv.x + toTgt.y * mv.y < -0.45f) {
+                    if (toTgt.x * mv.x + toTgt.y * mv.y < -0.45f ||
+                        (h.attackCommandAge > 0.85f && distToTgt > h.cachedAttackRange + lockTgt.radius + 40f)
+                    ) {
                         h.attackTargetId = null
                     }
                 }
@@ -1219,19 +1221,37 @@ class GameWorld(
                 }
                 val d = c.pos.distTo(owner.pos)
                 if (d < 48f) {
+                    var deliveredAny = false
                     val iter = c.cargo.iterator()
                     while (iter.hasNext()) {
                         val item = iter.next()
-                        if (addOrStackToInventory(owner, item)) iter.remove()
+                        if (addOrStackToInventory(owner, item)) {
+                            iter.remove()
+                            deliveredAny = true
+                        }
                     }
-                    owner.stash.forEach { if (owner.inventory.size < 6) owner.inventory.add(it) }
-                    owner.stash.clear()
+                    val stIter = owner.stash.iterator()
+                    while (stIter.hasNext()) {
+                        val item = stIter.next()
+                        if (addOrStackToInventory(owner, item)) {
+                            stIter.remove()
+                            deliveredAny = true
+                        }
+                    }
+                    // Keep undelivered cargo safely in stash if inventory is full
+                    val cargoRest = c.cargo.iterator()
+                    while (cargoRest.hasNext() && owner.stash.size < 6) {
+                        owner.stash.add(cargoRest.next())
+                        cargoRest.remove()
+                    }
                     owner.recalcStats()
                     c.delivering = false
                     c.returning = true
-                    if (owner.isPlayer) {
+                    if (owner.isPlayer && deliveredAny) {
                         addFloatingText(owner.pos, "Courier Delivered!", 0xFF38BDF8.toInt())
                         SoundEngine.play(SoundCue.BUY_ITEM)
+                    } else if (owner.isPlayer && (owner.stash.isNotEmpty() || c.cargo.isNotEmpty())) {
+                        addFloatingText(owner.pos, "Inventory Full (In Stash)", 0xFFF59E0B.toInt())
                     }
                 } else {
                     val dir = (owner.pos - c.pos).normalized()
@@ -2088,6 +2108,20 @@ class GameWorld(
         return true
     }
 
+    fun smartTpTarget(hero: HeroEntity, camPos: Vec2, camLocked: Boolean): Vec2 {
+        val fp = fountainPos(hero.team)
+        if (!camLocked) return camPos.copyVec()
+        // If already in fountain, TP toward frontline tower in player's lane; otherwise TP home to fountain
+        if (hero.pos.distTo(fp) < 620f) {
+            val laneTowers = towers.filter { it.alive && it.team == hero.team && it.blueprint.lane == hero.assignedLane }
+            val fallbackTowers = towers.filter { it.alive && it.team == hero.team }
+            val enemyAnc = if (hero.team == Team.RADIANT) direAncient.pos else radiantAncient.pos
+            val frontTower = (laneTowers.ifEmpty { fallbackTowers }).minByOrNull { it.pos.distTo(enemyAnc) }
+            return frontTower?.pos?.copyVec() ?: fp.copyVec()
+        }
+        return fp.copyVec()
+    }
+
     fun useTpScroll(hero: HeroEntity, aimPoint: Vec2 = fountainPos(hero.team)): Boolean {
         if (!hero.alive || hero.tpCooldown > 0f || hero.isStunned() || hero.isSilenced()) return false
         hero.tpCooldown = 45f
@@ -2156,33 +2190,35 @@ class GameWorld(
         }
 
         val atFountain = hero.pos.distTo(fountainPos(hero.team)) < 480f
-        // Remove consumed components
+        // Snapshot & remove consumed components, rolling back if inventory+stash have no space
+        val removedFromInv = mutableListOf<ItemSlot>()
+        val removedFromStash = mutableListOf<ItemSlot>()
         for (compId in def.components) {
             val invIdx = hero.inventory.indexOfFirst { it.itemId == compId }
-            if (invIdx >= 0) hero.inventory.removeAt(invIdx)
-            else {
+            if (invIdx >= 0) {
+                removedFromInv.add(hero.inventory.removeAt(invIdx))
+            } else {
                 val stIdx = hero.stash.indexOfFirst { it.itemId == compId }
-                if (stIdx >= 0) hero.stash.removeAt(stIdx)
+                if (stIdx >= 0) removedFromStash.add(hero.stash.removeAt(stIdx))
             }
         }
 
         val newSlot = ItemSlot(itemId, stacks = 1, charges = if (itemId == "magic_wand") 3 else 0)
         hero.gold -= price
 
-        if (atFountain || mode == GameMode.TURBO_5V5 || mode == GameMode.SANDBOX) {
-            if (!addOrStackToInventory(hero, newSlot)) {
-                if (hero.stash.size < 6) hero.stash.add(newSlot)
-                else {
-                    hero.gold += price
-                    return false
-                }
-            }
+        val placed = if (atFountain || mode == GameMode.TURBO_5V5 || mode == GameMode.SANDBOX) {
+            if (addOrStackToInventory(hero, newSlot)) true
+            else if (hero.stash.size < 6) { hero.stash.add(newSlot); true }
+            else false
         } else {
-            if (hero.stash.size < 6) hero.stash.add(newSlot)
-            else if (!addOrStackToInventory(hero, newSlot)) {
-                hero.gold += price
-                return false
-            }
+            if (hero.stash.size < 6) { hero.stash.add(newSlot); true }
+            else addOrStackToInventory(hero, newSlot)
+        }
+        if (!placed) {
+            hero.gold += price
+            hero.inventory.addAll(removedFromInv)
+            hero.stash.addAll(removedFromStash)
+            return false
         }
 
         if (itemId == "aghanims_scepter") hero.hasScepter = true

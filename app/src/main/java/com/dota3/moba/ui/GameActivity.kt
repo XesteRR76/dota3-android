@@ -56,13 +56,18 @@ class GameActivity : AppCompatActivity(), GameHudListener {
         super.onPause()
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemBars()
+    }
+
     override fun onDestroy() {
         activeDialog?.dismiss()
         super.onDestroy()
     }
 
     override fun onOpenShop() {
-        world.playerHero.moveIntent.set(0f, 0f)
+        synchronized(world) { world.playerHero.moveIntent.set(0f, 0f) }
         activeDialog?.dismiss()
         val ph = world.playerHero
         var selectedCat = ItemCategory.CORE
@@ -88,18 +93,22 @@ class GameActivity : AppCompatActivity(), GameHudListener {
 
         if (world.mode == GameMode.SANDBOX) {
             header.addView(smallBtn("+10,000g", 0xFF065F46.toInt()) {
-                ph.gold += 10000
-                ph.recalcStats()
+                synchronized(world) {
+                    ph.gold += 10000
+                    ph.recalcStats()
+                }
                 goldTv.text = "DOTA 3 SHOP  •  GOLD: ${ph.gold}g  •  STASH: ${ph.stash.size}"
             })
             header.addView(smallBtn("+LVL UP", 0xFF1E3A8A.toInt()) {
-                ph.addXp(1500)
+                synchronized(world) { ph.addXp(1500) }
                 Toast.makeText(this, "Level ${ph.level}!", Toast.LENGTH_SHORT).show()
             })
             header.addView(smallBtn("RESET CD", 0xFF7C2D12.toInt()) {
-                for (i in 0..3) ph.abilityCooldowns[i] = 0f
-                ph.hp = ph.maxHp
-                ph.mana = ph.maxMana
+                synchronized(world) {
+                    for (i in 0..3) ph.abilityCooldowns[i] = 0f
+                    ph.hp = ph.maxHp
+                    ph.mana = ph.maxMana
+                }
             })
         }
 
@@ -115,86 +124,93 @@ class GameActivity : AppCompatActivity(), GameHudListener {
         val itemListLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         fun refreshItems() {
-            goldTv.text = "DOTA 3 SHOP  •  GOLD: ${ph.gold}g  •  STASH: ${ph.stash.size}  •  SHARD: ${if (ph.hasShard) "YES" else "NO"}"
-            itemListLayout.removeAllViews()
+            synchronized(world) {
+                goldTv.text = "DOTA 3 SHOP  •  GOLD: ${ph.gold}g  •  STASH: ${ph.stash.size}  •  SHARD: ${if (ph.hasShard) "YES" else "NO"}"
+                itemListLayout.removeAllViews()
 
-            if (ph.inventory.isNotEmpty()) {
-                val invRow = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                        bottomMargin = 10
+                if (ph.inventory.isNotEmpty()) {
+                    val invRow = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                            bottomMargin = 10
+                        }
+                    }
+                    ph.inventory.toList().forEachIndexed { idx, slot ->
+                        val def = ItemCatalog.get(slot.itemId)
+                        invRow.addView(smallBtn("SELL ${def?.shortCode ?: "?"} (+${((def?.cost ?: 0) * 0.5f).toInt()}g)", 0xFF334155.toInt()) {
+                            synchronized(world) { world.sellItem(ph, idx) }
+                            refreshItems()
+                        })
+                    }
+                    itemListLayout.addView(invRow)
+                }
+
+                ph.neutralItemId?.let { nid ->
+                    ItemCatalog.getNeutral(nid)?.let { n ->
+                        itemListLayout.addView(TextView(this).apply {
+                            text = "Equipped Neutral (Tier ${n.tier}): ${n.name} — ${n.description}"
+                            textSize = 12f
+                            setTextColor(0xFFD8B4FE.toInt())
+                            setPadding(0, 0, 0, 8)
+                        })
                     }
                 }
-                ph.inventory.forEachIndexed { idx, slot ->
-                    val def = ItemCatalog.get(slot.itemId)
-                    invRow.addView(smallBtn("SELL ${def?.shortCode ?: "?"} (+${((def?.cost ?: 0) * 0.5f).toInt()}g)", 0xFF334155.toInt()) {
-                        world.sellItem(ph, idx)
-                        refreshItems()
-                    })
-                }
-                itemListLayout.addView(invRow)
-            }
 
-            ph.neutralItemId?.let { nid ->
-                ItemCatalog.getNeutral(nid)?.let { n ->
-                    itemListLayout.addView(TextView(this).apply {
-                        text = "Equipped Neutral (Tier ${n.tier}): ${n.name} — ${n.description}"
-                        textSize = 12f
-                        setTextColor(0xFFD8B4FE.toInt())
-                        setPadding(0, 0, 0, 8)
-                    })
-                }
-            }
-
-            for (item in ItemCatalog.allItems.filter { it.category == selectedCat }) {
-                val effCost = world.effectiveItemCost(ph, item)
-                val canAfford = ph.gold >= effCost
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    background = boxBg(0xFF151C2B.toInt(), if (canAfford) item.color else 0xFF334155.toInt())
-                    setPadding(12, 8, 12, 8)
-                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                        bottomMargin = 8
+                for (item in ItemCatalog.allItems.filter { it.category == selectedCat }) {
+                    val effCost = world.effectiveItemCost(ph, item)
+                    val canAfford = ph.gold >= effCost
+                    val row = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        background = boxBg(0xFF151C2B.toInt(), if (canAfford) item.color else 0xFF334155.toInt())
+                        setPadding(12, 8, 12, 8)
+                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                            bottomMargin = 8
+                        }
                     }
-                }
-                DotaAssetLoader.getItemIcon(item.id)?.let { bmp ->
-                    row.addView(ImageView(this).apply {
-                        setImageBitmap(bmp)
-                        scaleType = ImageView.ScaleType.CENTER_CROP
-                        layoutParams = LinearLayout.LayoutParams(56, 42).apply { rightMargin = 10 }
-                    })
-                }
-                val info = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                }
-                info.addView(TextView(this).apply {
-                    text = "${item.name} — ${effCost}g" + if (effCost < item.cost) " (Base ${item.cost}g)" else ""
-                    textSize = 13.5f
-                    setTypeface(null, Typeface.BOLD)
-                    setTextColor(if (canAfford) 0xFFF5B041.toInt() else 0xFF94A3B8.toInt())
-                })
-                info.addView(TextView(this).apply {
-                    text = item.description
-                    textSize = 11f
-                    setTextColor(0xFFCBD5E1.toInt())
-                })
-                row.addView(info)
-
-                row.addView(smallBtn("PIN", 0xFF1E293B.toInt()) {
-                    ph.quickBuyItemId = item.id
-                    Toast.makeText(this, "Pinned ${item.name} to Quick-Buy", Toast.LENGTH_SHORT).show()
-                })
-                row.addView(smallBtn("BUY", if (canAfford) 0xFF15803D.toInt() else 0xFF334155.toInt()) {
-                    if (world.buyItem(ph, item.id)) {
-                        world.dispatchCourier(ph)
-                        refreshItems()
-                    } else {
-                        Toast.makeText(this, "Need ${effCost}g or inventory space!", Toast.LENGTH_SHORT).show()
+                    DotaAssetLoader.getItemIcon(item.id)?.let { bmp ->
+                        row.addView(ImageView(this).apply {
+                            setImageBitmap(bmp)
+                            scaleType = ImageView.ScaleType.CENTER_CROP
+                            layoutParams = LinearLayout.LayoutParams(56, 42).apply { rightMargin = 10 }
+                        })
                     }
-                })
-                itemListLayout.addView(row)
+                    val info = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    }
+                    info.addView(TextView(this).apply {
+                        text = "${item.name} — ${effCost}g" + if (effCost < item.cost) " (Base ${item.cost}g)" else ""
+                        textSize = 13.5f
+                        setTypeface(null, Typeface.BOLD)
+                        setTextColor(if (canAfford) 0xFFF5B041.toInt() else 0xFF94A3B8.toInt())
+                    })
+                    info.addView(TextView(this).apply {
+                        text = item.description
+                        textSize = 11f
+                        setTextColor(0xFFCBD5E1.toInt())
+                    })
+                    row.addView(info)
+
+                    row.addView(smallBtn("PIN", 0xFF1E293B.toInt()) {
+                        synchronized(world) { ph.quickBuyItemId = item.id }
+                        Toast.makeText(this, "Pinned ${item.name} to Quick-Buy", Toast.LENGTH_SHORT).show()
+                    })
+                    row.addView(smallBtn("BUY", if (canAfford) 0xFF15803D.toInt() else 0xFF334155.toInt()) {
+                        val bought = synchronized(world) {
+                            if (world.buyItem(ph, item.id)) {
+                                world.dispatchCourier(ph)
+                                true
+                            } else false
+                        }
+                        if (bought) {
+                            refreshItems()
+                        } else {
+                            Toast.makeText(this, "Need ${effCost}g or inventory space!", Toast.LENGTH_SHORT).show()
+                        }
+                    })
+                    itemListLayout.addView(row)
+                }
             }
         }
 
@@ -206,18 +222,22 @@ class GameActivity : AppCompatActivity(), GameHudListener {
         }
         root.addView(tabRow)
 
+        val scrollH = (resources.displayMetrics.heightPixels * 0.54f).toInt().coerceIn(240, 620)
         val scroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 520)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, scrollH)
         }
         scroll.addView(itemListLayout)
         root.addView(scroll)
 
         refreshItems()
-        activeDialog = AlertDialog.Builder(this).setView(root).create().also { it.show() }
+        activeDialog = AlertDialog.Builder(this).setView(root).create().also {
+            it.setOnDismissListener { hideSystemBars() }
+            it.show()
+        }
     }
 
     override fun onOpenTalents() {
-        world.playerHero.moveIntent.set(0f, 0f)
+        synchronized(world) { world.playerHero.moveIntent.set(0f, 0f) }
         activeDialog?.dismiss()
         val ph = world.playerHero
         val root = LinearLayout(this).apply {
@@ -247,74 +267,83 @@ class GameActivity : AppCompatActivity(), GameHudListener {
         header.addView(smallBtn("CLOSE", 0xFF7F1D1D.toInt()) { activeDialog?.dismiss() })
         root.addView(header)
 
-        root.addView(TextView(this).apply {
-            text = "STR: ${ph.cachedStr.toInt()}  |  AGI: ${ph.cachedAgi.toInt()}  |  INT: ${ph.cachedInt.toInt()}  |  DMG: ${ph.cachedDamage.toInt()}\n" +
-                "ARMOR: ${"%.1f".format(ph.armor)}  |  MR: ${(ph.magicResist * 100).toInt()}%  |  AS: ${ph.cachedAttackSpeed.toInt()}  |  MS: ${ph.cachedMoveSpeed.toInt()}\n" +
-                "SPELL AMP: +${(ph.cachedSpellAmp * 100).toInt()}%  |  CDR: ${(ph.cachedCdr * 100).toInt()}%  |  LIFESTEAL: ${(ph.cachedLifesteal * 100).toInt()}%  |  EVA: ${(ph.cachedEvasion * 100).toInt()}%\n" +
-                "SCEPTER: ${if (ph.hasScepter) "ACTIVE" else "No"}  |  SHARD: ${if (ph.hasShard) "ACTIVE" else "No"}  |  AEGIS: ${if (ph.hasAegis) "YES" else "No"}"
-            textSize = 12f
-            setTextColor(0xFFCBD5E1.toInt())
-            setPadding(0, 8, 0, 12)
-        })
+        synchronized(world) {
+            root.addView(TextView(this).apply {
+                text = "STR: ${ph.cachedStr.toInt()}  |  AGI: ${ph.cachedAgi.toInt()}  |  INT: ${ph.cachedInt.toInt()}  |  DMG: ${ph.cachedDamage.toInt()}\n" +
+                    "ARMOR: ${"%.1f".format(ph.armor)}  |  MR: ${(ph.magicResist * 100).toInt()}%  |  AS: ${ph.cachedAttackSpeed.toInt()}  |  MS: ${ph.cachedMoveSpeed.toInt()}\n" +
+                    "SPELL AMP: +${(ph.cachedSpellAmp * 100).toInt()}%  |  CDR: ${(ph.cachedCdr * 100).toInt()}%  |  LIFESTEAL: ${(ph.cachedLifesteal * 100).toInt()}%  |  EVA: ${(ph.cachedEvasion * 100).toInt()}%\n" +
+                    "SCEPTER: ${if (ph.hasScepter) "ACTIVE" else "No"}  |  SHARD: ${if (ph.hasShard) "ACTIVE" else "No"}  |  AEGIS: ${if (ph.hasAegis) "YES" else "No"}"
+                textSize = 12f
+                setTextColor(0xFFCBD5E1.toInt())
+                setPadding(0, 8, 0, 12)
+            })
+        }
 
         val tiersLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun renderTiers() {
-            tiersLayout.removeAllViews()
-            for (idx in ph.def.talents.indices.reversed()) {
-                val t = ph.def.talents[idx]
-                val chosen = ph.talentsChosen[idx]
-                val unlocked = ph.level >= t.level
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                        bottomMargin = 8
+            synchronized(world) {
+                tiersLayout.removeAllViews()
+                for (idx in ph.def.talents.indices.reversed()) {
+                    val t = ph.def.talents[idx]
+                    val chosen = ph.talentsChosen[idx]
+                    val unlocked = ph.level >= t.level
+                    val row = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                            bottomMargin = 8
+                        }
                     }
-                }
-                val lBtn = Button(this).apply {
-                    text = t.leftLabel
-                    textSize = 12f
-                    setTextColor(Color.WHITE)
-                    background = boxBg(
-                        if (chosen == 0) 0xFF065F46.toInt() else if (unlocked && chosen == -1) 0xFF1E3A8A.toInt() else 0xFF1E293B.toInt(),
-                        if (chosen == 0) 0xFF34D399.toInt() else 0xFF475569.toInt()
-                    )
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                    setOnClickListener {
-                        if (world.chooseTalent(ph, idx, 0)) renderTiers()
+                    val lBtn = Button(this).apply {
+                        text = t.leftLabel
+                        textSize = 12f
+                        setTextColor(Color.WHITE)
+                        background = boxBg(
+                            if (chosen == 0) 0xFF065F46.toInt() else if (unlocked && chosen == -1) 0xFF1E3A8A.toInt() else 0xFF1E293B.toInt(),
+                            if (chosen == 0) 0xFF34D399.toInt() else 0xFF475569.toInt()
+                        )
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        setOnClickListener {
+                            val ok = synchronized(world) { world.chooseTalent(ph, idx, 0) }
+                            if (ok) renderTiers()
+                        }
                     }
-                }
-                val lvlBadge = TextView(this).apply {
-                    text = "Lv ${t.level}"
-                    textSize = 13f
-                    setTypeface(null, Typeface.BOLD)
-                    setTextColor(if (unlocked) 0xFFF5B041.toInt() else 0xFF64748B.toInt())
-                    gravity = Gravity.CENTER
-                    setPadding(16, 0, 16, 0)
-                }
-                val rBtn = Button(this).apply {
-                    text = t.rightLabel
-                    textSize = 12f
-                    setTextColor(Color.WHITE)
-                    background = boxBg(
-                        if (chosen == 1) 0xFF065F46.toInt() else if (unlocked && chosen == -1) 0xFF1E3A8A.toInt() else 0xFF1E293B.toInt(),
-                        if (chosen == 1) 0xFF34D399.toInt() else 0xFF475569.toInt()
-                    )
-                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                    setOnClickListener {
-                        if (world.chooseTalent(ph, idx, 1)) renderTiers()
+                    val lvlBadge = TextView(this).apply {
+                        text = "Lv ${t.level}"
+                        textSize = 13f
+                        setTypeface(null, Typeface.BOLD)
+                        setTextColor(if (unlocked) 0xFFF5B041.toInt() else 0xFF64748B.toInt())
+                        gravity = Gravity.CENTER
+                        setPadding(16, 0, 16, 0)
                     }
+                    val rBtn = Button(this).apply {
+                        text = t.rightLabel
+                        textSize = 12f
+                        setTextColor(Color.WHITE)
+                        background = boxBg(
+                            if (chosen == 1) 0xFF065F46.toInt() else if (unlocked && chosen == -1) 0xFF1E3A8A.toInt() else 0xFF1E293B.toInt(),
+                            if (chosen == 1) 0xFF34D399.toInt() else 0xFF475569.toInt()
+                        )
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        setOnClickListener {
+                            val ok = synchronized(world) { world.chooseTalent(ph, idx, 1) }
+                            if (ok) renderTiers()
+                        }
+                    }
+                    row.addView(lBtn)
+                    row.addView(lvlBadge)
+                    row.addView(rBtn)
+                    tiersLayout.addView(row)
                 }
-                row.addView(lBtn)
-                row.addView(lvlBadge)
-                row.addView(rBtn)
-                tiersLayout.addView(row)
             }
         }
         renderTiers()
         root.addView(tiersLayout)
 
-        activeDialog = AlertDialog.Builder(this).setView(root).create().also { it.show() }
+        activeDialog = AlertDialog.Builder(this).setView(root).create().also {
+            it.setOnDismissListener { hideSystemBars() }
+            it.show()
+        }
     }
 
     override fun onOpenScoreboard() {
@@ -328,65 +357,71 @@ class GameActivity : AppCompatActivity(), GameHudListener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        header.addView(TextView(this).apply {
-            text = "SCOREBOARD  •  RADIANT ${world.radiantKills} - ${world.direKills} DIRE"
-            textSize = 16f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(0xFFF5B041.toInt())
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        header.addView(smallBtn("CLOSE", 0xFF7F1D1D.toInt()) { activeDialog?.dismiss() })
-        root.addView(header)
-
-        val scroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 500)
-        }
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val mins = (world.gameTime / 60f).coerceAtLeast(0.5f)
-        for (team in listOf(Team.RADIANT, Team.DIRE)) {
-            list.addView(TextView(this).apply {
-                text = team.name
-                textSize = 14f
+        synchronized(world) {
+            header.addView(TextView(this).apply {
+                text = "SCOREBOARD  •  RADIANT ${world.radiantKills} - ${world.direKills} DIRE"
+                textSize = 16f
                 setTypeface(null, Typeface.BOLD)
-                setTextColor(if (team == Team.RADIANT) 0xFF2ECC71.toInt() else 0xFFE74C3C.toInt())
-                setPadding(0, 8, 0, 4)
+                setTextColor(0xFFF5B041.toInt())
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
-            for (h in world.heroes.filter { it.team == team }) {
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    setPadding(4, 4, 4, 4)
-                }
-                DotaAssetLoader.getHeroCirclePortrait(h.def.id, 44)?.let { bmp ->
-                    row.addView(ImageView(this).apply {
-                        setImageBitmap(bmp)
-                        layoutParams = LinearLayout.LayoutParams(34, 34).apply { rightMargin = 8 }
-                    })
-                }
-                val gpm = (h.totalGoldEarned / mins).toInt()
-                row.addView(TextView(this).apply {
-                    text = "${if (h.isPlayer) "★ " else ""}${h.def.name} (Lv${h.level})  |  ${h.kills}/${h.deaths}/${h.assists}  |  CS: ${h.lastHits}/${h.denies}  |  NW: ${h.netWorth} (${gpm} GPM)"
-                    textSize = 11.5f
-                    setTextColor(if (h.isPlayer) 0xFFFDE047.toInt() else 0xFFE2E8F0.toInt())
+            header.addView(smallBtn("CLOSE", 0xFF7F1D1D.toInt()) { activeDialog?.dismiss() })
+            root.addView(header)
+
+            val scrollH = (resources.displayMetrics.heightPixels * 0.54f).toInt().coerceIn(240, 620)
+            val scroll = ScrollView(this).apply {
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, scrollH)
+            }
+            val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val mins = (world.gameTime / 60f).coerceAtLeast(0.5f)
+            for (team in listOf(Team.RADIANT, Team.DIRE)) {
+                list.addView(TextView(this).apply {
+                    text = team.name
+                    textSize = 14f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(if (team == Team.RADIANT) 0xFF2ECC71.toInt() else 0xFFE74C3C.toInt())
+                    setPadding(0, 8, 0, 4)
                 })
-                for (slot in h.inventory.take(6)) {
-                    DotaAssetLoader.getItemIcon(slot.itemId)?.let { ibmp ->
+                for (h in world.heroes.filter { it.team == team }) {
+                    val row = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(4, 4, 4, 4)
+                    }
+                    DotaAssetLoader.getHeroCirclePortrait(h.def.id, 44)?.let { bmp ->
                         row.addView(ImageView(this).apply {
-                            setImageBitmap(ibmp)
-                            layoutParams = LinearLayout.LayoutParams(26, 20).apply { leftMargin = 4 }
+                            setImageBitmap(bmp)
+                            layoutParams = LinearLayout.LayoutParams(34, 34).apply { rightMargin = 8 }
                         })
                     }
+                    val gpm = (h.totalGoldEarned / mins).toInt()
+                    row.addView(TextView(this).apply {
+                        text = "${if (h.isPlayer) "★ " else ""}${h.def.name} (Lv${h.level})  |  ${h.kills}/${h.deaths}/${h.assists}  |  CS: ${h.lastHits}/${h.denies}  |  NW: ${h.netWorth} (${gpm} GPM)"
+                        textSize = 11.5f
+                        setTextColor(if (h.isPlayer) 0xFFFDE047.toInt() else 0xFFE2E8F0.toInt())
+                    })
+                    for (slot in h.inventory.take(6)) {
+                        DotaAssetLoader.getItemIcon(slot.itemId)?.let { ibmp ->
+                            row.addView(ImageView(this).apply {
+                                setImageBitmap(ibmp)
+                                layoutParams = LinearLayout.LayoutParams(26, 20).apply { leftMargin = 4 }
+                            })
+                        }
+                    }
+                    list.addView(row)
                 }
-                list.addView(row)
             }
+            scroll.addView(list)
+            root.addView(scroll)
         }
-        scroll.addView(list)
-        root.addView(scroll)
-        activeDialog = AlertDialog.Builder(this).setView(root).create().also { it.show() }
+        activeDialog = AlertDialog.Builder(this).setView(root).create().also {
+            it.setOnDismissListener { hideSystemBars() }
+            it.show()
+        }
     }
 
     override fun onOpenPauseMenu() {
-        world.paused = true
+        synchronized(world) { world.paused = true }
         activeDialog?.dismiss()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -402,7 +437,7 @@ class GameActivity : AppCompatActivity(), GameHudListener {
             setPadding(0, 0, 0, 16)
         })
         root.addView(smallBtn("RESUME MATCH", 0xFF15803D.toInt()) {
-            world.paused = false
+            synchronized(world) { world.paused = false }
             activeDialog?.dismiss()
         })
         root.addView(smallBtn(if (SoundEngine.enabled) "SOUND: ON" else "SOUND: OFF", 0xFF1E293B.toInt()) { btn ->
@@ -413,7 +448,10 @@ class GameActivity : AppCompatActivity(), GameHudListener {
             activeDialog?.dismiss()
             finish()
         })
-        activeDialog = AlertDialog.Builder(this).setView(root).setCancelable(false).create().also { it.show() }
+        activeDialog = AlertDialog.Builder(this).setView(root).setCancelable(false).create().also {
+            it.setOnDismissListener { hideSystemBars() }
+            it.show()
+        }
     }
 
     override fun onMatchEnded() {

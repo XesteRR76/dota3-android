@@ -239,17 +239,16 @@ class Mesh3D(
         }
 
         fun createCurvedBlade(): Mesh3D {
-            // Sleek forward-extending (+z) curved katana/glaive blade centered near hilt at z=0..1
+            // Bold forward-extending (+z) curved katana/glaive blade centered near hilt at z=0..1
             val verts = ArrayList<Float>()
             val idx = ArrayList<Short>()
             val segs = 6
             for (i in 0..segs) {
                 val t = i.toFloat() / segs
                 val z = t * 1.0f
-                val curveX = t * t * 0.16f
-                val halfH = (1f - t * 0.72f) * 0.08f
-                val halfW = (1f - t * 0.85f) * 0.035f
-                // 4 points around blade cross-section (spine top, edge right, spine bot, edge left)
+                val curveX = t * t * 0.22f
+                val halfH = (1f - t * 0.65f) * 0.14f
+                val halfW = (1f - t * 0.78f) * 0.085f
                 fun pv(x: Float, y: Float, zPos: Float, nx: Float, ny: Float, nz: Float) {
                     verts.add(x); verts.add(y); verts.add(zPos)
                     verts.add(nx); verts.add(ny); verts.add(nz)
