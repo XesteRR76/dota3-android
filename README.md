@@ -1,19 +1,16 @@
-# DOTA 3: Ancient Rebirth (Android MOBA)
+# DOTA 3: Ancient Rebirth — 3D Android MOBA
 
-Полноценная мобильная MOBA в духе Dota 2 / Dota 3 на Android (Kotlin + Native Canvas SurfaceView + Procedural PCM Audio).
+Полноценная **3D** мобильная MOBA в духе Dota 2 / Dota 3 на Android (`OpenGL ES 2.0 3D Engine` + оригинальные арты героев/скиллов/предметов Dota 2 + эргономичное управление в стиле MLBB).
 
-## Реализованные механики из Dota
-- **12 героев** (STR / AGI / INT / UNIVERSAL), включая оригинального героя Dota 3 — **Chronos Prime**
-- **48 уникальных способностей** (Q, W, E, R) + **Aghanim's Scepter** и **Aghanim's Shard** апгрейды
-- **24 Аспекта (Facets)** и **Дерево талантов** на 10 / 15 / 20 / 25 уровнях
-- **44+ предметов** с авто-сборкой из компонентов, Quick-Buy, продажей и **12 нейтральными предметами** (Tier 1–4)
-- **Полная 3-лайновая карта (4800x4800)**:
-  - Radiant vs Dire (T1–T4 башни, Melee/Ranged казармы, Древний/Трон, Фонтан)
-  - Река с рунами (Double Damage, Haste, Regeneration, Arcane, Invisibility, Bounty, Wisdom, Lotus)
-  - High-Ground (25% промаха снизу вверх), разрушаемые деревья (Tango / Quelling Blade)
-  - **Roshan** (Bash, Slam, дропает Aegis of the Immortal, Cheese, Refresher Shard)
-  - **Tormentors** (отражение 70% урона, дарует Aghanim's Shard)
-  - **Twin Gates** (порталы на краях карты), **Neutral Jungle Camps** (работает стак кемпов!)
-  - **Туман войны (Fog of War)** + **День/Ночь** + **Observer & Sentry Wards (True Sight)** + **Dust & Smoke of Deceit**
-- **Экономика и тактика**: Last Hit, Deny (`!`), Tower Backdoor Protection, Glyph of Fortification (с мультишотом), Buyback, личный Курьер, TP Scroll
-- **Режимы**: 5v5 All Pick, 5v5 Turbo, 1v1 Mid, Hero Sandbox
+## Что нового в v3.1.0
+- **Настоящий 3D-движок (`World3DRenderer` + `Mesh3D`)**:
+  - 3D-карта высот `4800x4800`: углублённая 3D-река с волнами, возвышенности High Ground (`+38` единиц), 3D-деревья, 3D-башни, казармы, Древние, Рошан и Торменторы.
+  - 3D-герои с анимацией шага, оружием, орбами Quas-Wex-Exort у Invoker, кольцами времени у Chronos Prime, куполом Chrono-Singularity, колонной Sun Strike и цепью хука Pudge.
+  - Сглаженный 3D-туман войны (билинейная GL-текстура) и динамическое освещение День/Ночь.
+- **Оригинальные картинки из Dota 2 + Chronos Prime**:
+  - Все 12 портретов героев (11 официальных из Dota 2 + арт Chronos Prime), 48 иконок способностей и 57 иконок предметов (включая нейтральные) в интерфейсе, драфте, магазине, миникарте и над полосками HP!
+- **Управление в стиле MLBB (`MlbbHudOverlayView`)**:
+  - Левый плавающий/зафиксированный джойстик с плавным откликом без конфликтов с тапами по земле.
+  - Правая веерная дуга скиллов `Q / W / E / R` вокруг большой кнопки `ATK` + кнопки `CREEP` (ластхит) и `TWR/!` (башни или денай).
+  - Перетаскивание прицела скилла в 3D-мире с зоной отмены **`CANCEL X`**!
+  - Две карточки быстрой покупки в 1 тап прямо под миникартой.

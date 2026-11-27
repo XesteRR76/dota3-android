@@ -11,8 +11,8 @@ android {
         applicationId = "com.dota3.moba"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "3.0.0-alpha"
+        versionCode = 2
+        versionName = "3.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

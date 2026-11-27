@@ -8,6 +8,8 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -15,6 +17,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.dota3.moba.core.DotaAssetLoader
 import com.dota3.moba.core.SoundEngine
 import com.dota3.moba.model.GameMode
 
@@ -22,12 +25,24 @@ class MainMenuActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DotaAssetLoader.init(this)
         SoundEngine.init()
         hideSystemBars()
 
+        val frame = FrameLayout(this)
+
+        // Epic Dota 3 Splash Banner backdrop
+        DotaAssetLoader.getSplashBanner()?.let { banner ->
+            frame.addView(ImageView(this).apply {
+                setImageBitmap(banner)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                alpha = 0.34f
+            }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        }
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFF0A0D14.toInt())
+            setBackgroundColor(0x99080A10.toInt())
             setPadding(44, 28, 44, 28)
         }
 
@@ -48,23 +63,21 @@ class MainMenuActivity : AppCompatActivity() {
             letterSpacing = 0.08f
         })
         titleCol.addView(TextView(this).apply {
-            text = "ANCIENT REBIRTH  •  MOBILE MOBA"
+            text = "ANCIENT REBIRTH  •  3D MOBILE MOBA"
             textSize = 13f
             setTextColor(0xFFF5B041.toInt())
             letterSpacing = 0.14f
         })
         header.addView(titleCol)
 
-        val soundBtn = styledButton(if (SoundEngine.enabled) "SOUND: ON" else "SOUND: OFF", 0xFF1E293B.toInt(), 0xFF64748B.toInt()) { btn ->
+        val soundBtn = styledButton(if (SoundEngine.enabled) "SOUND: ON" else "SOUND: OFF", 0xDD1E293B.toInt(), 0xFF64748B.toInt()) { btn ->
             SoundEngine.enabled = !SoundEngine.enabled
             btn.text = if (SoundEngine.enabled) "SOUND: ON" else "SOUND: OFF"
         }
         header.addView(soundBtn)
 
-        val guideBtn = styledButton("HEROES & ITEMS", 0xFF1E293B.toInt(), 0xFFF5B041.toInt()) {
+        val guideBtn = styledButton("HEROES & ITEMS", 0xDD1E293B.toInt(), 0xFFF5B041.toInt()) {
             startActivity(Intent(this, EncyclopediaActivity::class.java))
-        }.apply {
-            (layoutParams as? LinearLayout.LayoutParams)?.leftMargin = 16
         }
         val guideLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             leftMargin = 16
@@ -72,7 +85,6 @@ class MainMenuActivity : AppCompatActivity() {
         header.addView(guideBtn, guideLp)
         root.addView(header)
 
-        // Main Split: Play Modes on Left, Dota 3 Features on Right
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply {
@@ -80,19 +92,16 @@ class MainMenuActivity : AppCompatActivity() {
             }
         }
 
-        // Left: Play Mode Cards
         val modesScroll = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1.35f)
         }
         val modesList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-
         for (mode in GameMode.entries) {
             modesList.addView(buildModeCard(mode))
         }
         modesScroll.addView(modesList)
         content.addView(modesScroll)
 
-        // Right: Dota 3 Feature Showcase & Controls
         val infoScroll = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f).apply {
                 leftMargin = 24
@@ -100,35 +109,28 @@ class MainMenuActivity : AppCompatActivity() {
         }
         val infoPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = cardBg(0xFF121722.toInt(), 0xFF2B3548.toInt())
+            background = cardBg(0xCC111622.toInt(), 0xFF334155.toInt())
             setPadding(24, 20, 24, 20)
         }
         infoPanel.addView(TextView(this).apply {
-            text = "WHAT'S IN DOTA 3"
+            text = "DOTA 3 — 3D & MLBB CONTROLS"
             textSize = 15f
             setTypeface(null, Typeface.BOLD)
             setTextColor(0xFFF5B041.toInt())
         })
         infoPanel.addView(TextView(this).apply {
             text = """
-                • 12 Heroes (STR / AGI / INT / UNIVERSAL) incl. Dota 3's Chronos Prime
-                • 24 Dota 3 Facets + Lv 10/15/20/25 Talent Trees
-                • Aghanim's Scepter & Aghanim's Shard Upgrades
-                • 44+ Items w/ Auto-Combine Recipes + 12 Neutral Tiers
-                • Full 3-Lane Map: River, High-Ground Miss (25%), Destructible Trees
-                • Last-Hitting, Denying (!), Tower Backdoor, Glyph & Buyback
-                • Courier Delivery, TP Scrolls, Observer & Sentry Wards, Smoke & Dust
-                • Roshan (Aegis + Cheese + Refresher), Tormentors, Twin Gates, Lotus & Runes
-                • Day/Night Cycle & Real Grid Fog of War
-                
-                CONTROLS:
-                • Left Thumb: Virtual Joystick (or Tap Map to Move)
-                • Right Thumb: ATK (Hero), LH (Creep), ! (Deny)
-                • Drag Q/W/E/R to Aim Skillshots or Tap for Auto-Aim
-                • Top-Left Minimap: Tap/Drag to Pan Camera
+                • Настоящий 3D-движок OpenGL ES: 3D-рельеф (High Ground и река), 3D-герои с оружием и орбами, 3D-башни, Рошан и туман войны
+                • Оригинальные портреты героев, иконки способностей и предметов из Dota 2 + Chronos Prime
+                • Управление в стиле MLBB:
+                  - Левый палец: плавный джойстик
+                  - Правый палец: веерная дуга скиллов Q/W/E/R
+                  - Потяни скилл для прицела -> наведи на CANCEL X для отмены!
+                  - Кнопки ATK (герой) / CREEP (ластхит) / TWR/! (башня или денай)
+                  - Быстрая покупка в 1 тап под миникартой + Курьер и TP
             """.trimIndent()
             textSize = 12.5f
-            setTextColor(0xFFCBD5E1.toInt())
+            setTextColor(0xFFE2E8F0.toInt())
             setPadding(0, 10, 0, 0)
             setLineSpacing(4f, 1.05f)
         })
@@ -136,14 +138,15 @@ class MainMenuActivity : AppCompatActivity() {
         content.addView(infoScroll)
 
         root.addView(content)
-        setContentView(root)
+        frame.addView(root, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        setContentView(frame)
     }
 
     private fun buildModeCard(mode: GameMode): View {
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = cardBg(0xFF151B28.toInt(), if (mode == GameMode.ALL_PICK_5V5) 0xFFE53935.toInt() else 0xFF334155.toInt())
+            background = cardBg(0xDD151B28.toInt(), if (mode == GameMode.ALL_PICK_5V5) 0xFFE53935.toInt() else 0xFF334155.toInt())
             setPadding(22, 16, 22, 16)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = 14

@@ -6,6 +6,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -13,6 +14,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.dota3.moba.core.DotaAssetLoader
 import com.dota3.moba.data.HeroCatalog
 import com.dota3.moba.data.ItemCatalog
 
@@ -22,6 +24,7 @@ class EncyclopediaActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DotaAssetLoader.init(this)
         hideSystemBars()
 
         val root = LinearLayout(this).apply {
@@ -36,7 +39,7 @@ class EncyclopediaActivity : AppCompatActivity() {
         }
         topBar.addView(TextView(this).apply {
             text = "DOTA 3 ARMORY & COMPENDIUM"
-            textSize = 22f
+            textSize = 21f
             setTypeface(null, Typeface.BOLD)
             setTextColor(0xFFF5B041.toInt())
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -67,35 +70,67 @@ class EncyclopediaActivity : AppCompatActivity() {
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 background = boxBg(0xFF131824.toInt(), h.primaryColor)
-                setPadding(20, 14, 20, 14)
+                setPadding(18, 14, 18, 14)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = 12
                 }
             }
-            card.addView(TextView(this).apply {
-                text = "${h.name.uppercase()} — ${h.title}  [${h.attribute.shortLabel}]  (${h.roles.joinToString { it.label }})"
-                textSize = 15.5f
+            val top = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            DotaAssetLoader.getHeroPortrait(h.id)?.let { bmp ->
+                top.addView(ImageView(this).apply {
+                    setImageBitmap(bmp)
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    layoutParams = LinearLayout.LayoutParams(150, 86).apply { rightMargin = 14 }
+                })
+            }
+            val headCol = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            headCol.addView(TextView(this).apply {
+                text = "${h.name.uppercase()} — ${h.title}  [${h.attribute.shortLabel}]"
+                textSize = 15f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(Color.WHITE)
             })
-            card.addView(TextView(this).apply {
+            headCol.addView(TextView(this).apply {
                 text = "Innate: ${h.innateName} — ${h.innateDesc}\nFacets: ${h.facets.joinToString(" | ") { "${it.name}: ${it.description}" }}"
-                textSize = 12f
+                textSize = 11.5f
                 setTextColor(0xFFF5B041.toInt())
-                setPadding(0, 4, 0, 6)
             })
-            val abText = h.abilities.joinToString("\n") { ab ->
+            top.addView(headCol)
+            card.addView(top)
+
+            for (ab in h.abilities) {
+                val abRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                        topMargin = 6
+                    }
+                }
+                DotaAssetLoader.getAbilityIcon(ab.id)?.let { bmp ->
+                    abRow.addView(ImageView(this).apply {
+                        setImageBitmap(bmp)
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        layoutParams = LinearLayout.LayoutParams(40, 40).apply { rightMargin = 10 }
+                    })
+                }
                 val extra = buildString {
                     if (ab.scepterUpgrade.isNotEmpty()) append(" [Scepter: ${ab.scepterUpgrade}]")
                     if (ab.shardUpgrade.isNotEmpty()) append(" [Shard: ${ab.shardUpgrade}]")
                 }
-                "  [${ab.keyLabel}] ${ab.name}: ${ab.description}$extra"
+                abRow.addView(TextView(this).apply {
+                    text = "[${ab.keyLabel}] ${ab.name}: ${ab.description}$extra"
+                    textSize = 11.5f
+                    setTextColor(0xFFCBD5E1.toInt())
+                    layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                })
+                card.addView(abRow)
             }
-            card.addView(TextView(this).apply {
-                text = abText
-                textSize = 12f
-                setTextColor(0xFFCBD5E1.toInt())
-            })
             contentContainer.addView(card)
         }
     }
@@ -104,24 +139,37 @@ class EncyclopediaActivity : AppCompatActivity() {
         contentContainer.removeAllViews()
         for (item in ItemCatalog.allItems) {
             val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
                 background = boxBg(0xFF131824.toInt(), item.color)
-                setPadding(18, 12, 18, 12)
+                setPadding(14, 10, 14, 10)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = 8
                 }
             }
-            card.addView(TextView(this).apply {
-                text = "${item.name} [${item.shortCode}] — ${item.cost}g  (${item.category.title})"
-                textSize = 14.5f
+            DotaAssetLoader.getItemIcon(item.id)?.let { bmp ->
+                card.addView(ImageView(this).apply {
+                    setImageBitmap(bmp)
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    layoutParams = LinearLayout.LayoutParams(62, 46).apply { rightMargin = 12 }
+                })
+            }
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            col.addView(TextView(this).apply {
+                text = "${item.name} — ${item.cost}g  (${item.category.title})"
+                textSize = 14f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(0xFFF5B041.toInt())
             })
-            card.addView(TextView(this).apply {
+            col.addView(TextView(this).apply {
                 text = item.description
-                textSize = 12f
+                textSize = 11.5f
                 setTextColor(0xFFCBD5E1.toInt())
             })
+            card.addView(col)
             contentContainer.addView(card)
         }
     }
@@ -130,24 +178,37 @@ class EncyclopediaActivity : AppCompatActivity() {
         contentContainer.removeAllViews()
         for (n in ItemCatalog.neutralItems) {
             val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
                 background = boxBg(0xFF131824.toInt(), 0xFFA855F7.toInt())
-                setPadding(18, 12, 18, 12)
+                setPadding(14, 10, 14, 10)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = 8
                 }
             }
-            card.addView(TextView(this).apply {
+            DotaAssetLoader.getItemIcon(n.id)?.let { bmp ->
+                card.addView(ImageView(this).apply {
+                    setImageBitmap(bmp)
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    layoutParams = LinearLayout.LayoutParams(58, 44).apply { rightMargin = 12 }
+                })
+            }
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            col.addView(TextView(this).apply {
                 text = "Tier ${n.tier}: ${n.name}"
-                textSize = 14.5f
+                textSize = 14f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(0xFFD8B4FE.toInt())
             })
-            card.addView(TextView(this).apply {
+            col.addView(TextView(this).apply {
                 text = n.description
-                textSize = 12f
+                textSize = 11.5f
                 setTextColor(0xFFCBD5E1.toInt())
             })
+            card.addView(col)
             contentContainer.addView(card)
         }
     }

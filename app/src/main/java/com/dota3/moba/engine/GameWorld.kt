@@ -2683,11 +2683,11 @@ class GameWorld(
         if (announcements.size > 3) announcements.removeAt(0)
     }
 
-    // Smart Attack helpers for player buttons
-    fun playerSmartAttack(preferCreep: Boolean = false, preferDeny: Boolean = false) {
+    // Smart Attack helpers for MLBB-style buttons (Hero / Creep / Tower-or-Deny)
+    fun playerSmartAttack(preferCreep: Boolean = false, preferDeny: Boolean = false, preferStructure: Boolean = false) {
         val h = playerHero
         if (!h.alive) return
-        val searchR = h.cachedAttackRange + 280f
+        val searchR = h.cachedAttackRange + 320f
         if (preferDeny) {
             val denyCreep = creeps.filter { it.alive && it.team == h.team && it.hp < it.maxHp * 0.5f && it.pos.distTo(h.pos) <= searchR }
                 .minByOrNull { it.hp }
@@ -2696,14 +2696,27 @@ class GameWorld(
                 if (denyCreep.pos.distTo(h.pos) > h.cachedAttackRange) h.tapMoveTarget = denyCreep.pos.copyVec()
                 return
             }
+            val denyTower = towers.filter { it.alive && it.team == h.team && it.hp < it.maxHp * 0.1f && it.pos.distTo(h.pos) <= searchR }
+                .minByOrNull { it.hp }
+            if (denyTower != null) {
+                h.attackTargetId = denyTower.id
+                return
+            }
         }
         val enemies = allEnemyUnits(h.team, h.pos, searchR).filter { !it.isInvisible() || fogOfWar.hasTrueSight(it.pos.x, it.pos.y) }
-        val target = if (preferCreep) {
-            enemies.filter { it is CreepEntity || it is NeutralCreepEntity }.minByOrNull { it.hp }
-                ?: enemies.minByOrNull { it.pos.distTo(h.pos) }
-        } else {
-            enemies.filterIsInstance<HeroEntity>().minByOrNull { it.hp }
-                ?: enemies.minByOrNull { it.pos.distTo(h.pos) }
+        val target = when {
+            preferStructure -> {
+                enemies.filter { it is TowerEntity || it is BarracksEntity || it is AncientEntity }.minByOrNull { it.pos.distTo(h.pos) }
+                    ?: enemies.minByOrNull { it.pos.distTo(h.pos) }
+            }
+            preferCreep -> {
+                enemies.filter { it is CreepEntity || it is NeutralCreepEntity }.minByOrNull { it.hp }
+                    ?: enemies.minByOrNull { it.pos.distTo(h.pos) }
+            }
+            else -> {
+                enemies.filterIsInstance<HeroEntity>().minByOrNull { it.hp }
+                    ?: enemies.minByOrNull { it.pos.distTo(h.pos) }
+            }
         }
         if (target != null) {
             h.attackTargetId = target.id

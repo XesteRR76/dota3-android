@@ -7,6 +7,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -15,6 +16,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.dota3.moba.core.DotaAssetLoader
 import com.dota3.moba.core.SoundEngine
 import com.dota3.moba.data.ItemCatalog
 import com.dota3.moba.engine.GameWorld
@@ -23,12 +25,13 @@ import com.dota3.moba.model.*
 class GameActivity : AppCompatActivity(), GameHudListener {
 
     private lateinit var world: GameWorld
-    private lateinit var gameView: GameSurfaceView
+    private lateinit var gameView: Game3DView
     private var activeDialog: AlertDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         hideSystemBars()
+        DotaAssetLoader.init(this)
         SoundEngine.init()
 
         val heroId = intent.getStringExtra("heroId") ?: "juggernaut"
@@ -39,8 +42,18 @@ class GameActivity : AppCompatActivity(), GameHudListener {
         val diff = intent.getStringExtra("diff")?.let { runCatching { BotDifficulty.valueOf(it) }.getOrNull() } ?: BotDifficulty.NORMAL
 
         world = GameWorld(heroId, facetIdx, team, lane, mode, diff)
-        gameView = GameSurfaceView(this, world, this)
+        gameView = Game3DView(this, world, this)
         setContentView(gameView)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        gameView.onResume()
+    }
+
+    override fun onPause() {
+        gameView.onPause()
+        super.onPause()
     }
 
     override fun onDestroy() {
@@ -65,7 +78,7 @@ class GameActivity : AppCompatActivity(), GameHudListener {
         }
         val goldTv = TextView(this).apply {
             text = "DOTA 3 SHOP  •  GOLD: ${ph.gold}g  •  STASH: ${ph.stash.size}"
-            textSize = 16f
+            textSize = 15.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(0xFFF5B041.toInt())
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -92,7 +105,6 @@ class GameActivity : AppCompatActivity(), GameHudListener {
         header.addView(smallBtn("CLOSE", 0xFF7F1D1D.toInt()) { activeDialog?.dismiss() })
         root.addView(header)
 
-        // Category Tabs
         val tabRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
@@ -105,7 +117,6 @@ class GameActivity : AppCompatActivity(), GameHudListener {
             goldTv.text = "DOTA 3 SHOP  •  GOLD: ${ph.gold}g  •  STASH: ${ph.stash.size}  •  SHARD: ${if (ph.hasShard) "YES" else "NO"}"
             itemListLayout.removeAllViews()
 
-            // Current Inventory (Sell option)
             if (ph.inventory.isNotEmpty()) {
                 val invRow = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
@@ -123,7 +134,6 @@ class GameActivity : AppCompatActivity(), GameHudListener {
                 itemListLayout.addView(invRow)
             }
 
-            // Neutral Item Status
             ph.neutralItemId?.let { nid ->
                 ItemCatalog.getNeutral(nid)?.let { n ->
                     itemListLayout.addView(TextView(this).apply {
@@ -142,17 +152,24 @@ class GameActivity : AppCompatActivity(), GameHudListener {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
                     background = boxBg(0xFF151C2B.toInt(), if (canAfford) item.color else 0xFF334155.toInt())
-                    setPadding(14, 10, 14, 10)
+                    setPadding(12, 8, 12, 8)
                     layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                         bottomMargin = 8
                     }
+                }
+                DotaAssetLoader.getItemIcon(item.id)?.let { bmp ->
+                    row.addView(ImageView(this).apply {
+                        setImageBitmap(bmp)
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        layoutParams = LinearLayout.LayoutParams(56, 42).apply { rightMargin = 10 }
+                    })
                 }
                 val info = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                 }
                 info.addView(TextView(this).apply {
-                    text = "${item.name} [${item.shortCode}] — ${effCost}g" + if (effCost < item.cost) " (Base ${item.cost}g)" else ""
+                    text = "${item.name} — ${effCost}g" + if (effCost < item.cost) " (Base ${item.cost}g)" else ""
                     textSize = 13.5f
                     setTypeface(null, Typeface.BOLD)
                     setTextColor(if (canAfford) 0xFFF5B041.toInt() else 0xFF94A3B8.toInt())
@@ -211,9 +228,16 @@ class GameActivity : AppCompatActivity(), GameHudListener {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
+        DotaAssetLoader.getHeroPortrait(ph.def.id)?.let { bmp ->
+            header.addView(ImageView(this).apply {
+                setImageBitmap(bmp)
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                layoutParams = LinearLayout.LayoutParams(92, 52).apply { rightMargin = 12 }
+            })
+        }
         header.addView(TextView(this).apply {
             text = "${ph.def.name.uppercase()} (Lv ${ph.level})  •  TALENTS & STATS"
-            textSize = 17f
+            textSize = 16f
             setTypeface(null, Typeface.BOLD)
             setTextColor(0xFFF5B041.toInt())
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -221,7 +245,6 @@ class GameActivity : AppCompatActivity(), GameHudListener {
         header.addView(smallBtn("CLOSE", 0xFF7F1D1D.toInt()) { activeDialog?.dismiss() })
         root.addView(header)
 
-        // Hero Stats Grid Summary
         root.addView(TextView(this).apply {
             text = "STR: ${ph.cachedStr.toInt()}  |  AGI: ${ph.cachedAgi.toInt()}  |  INT: ${ph.cachedInt.toInt()}  |  DMG: ${ph.cachedDamage.toInt()}\n" +
                 "ARMOR: ${"%.1f".format(ph.armor)}  |  MR: ${(ph.magicResist * 100).toInt()}%  |  AS: ${ph.cachedAttackSpeed.toInt()}  |  MS: ${ph.cachedMoveSpeed.toInt()}\n" +
@@ -232,7 +255,6 @@ class GameActivity : AppCompatActivity(), GameHudListener {
             setPadding(0, 8, 0, 12)
         })
 
-        // 4 Talent Tiers (25 down to 10)
         val tiersLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun renderTiers() {
             tiersLayout.removeAllViews()
@@ -328,14 +350,32 @@ class GameActivity : AppCompatActivity(), GameHudListener {
                 setPadding(0, 8, 0, 4)
             })
             for (h in world.heroes.filter { it.team == team }) {
-                val itemsStr = h.inventory.joinToString(" ") { ItemCatalog.get(it.itemId)?.shortCode ?: "?" }
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(4, 4, 4, 4)
+                }
+                DotaAssetLoader.getHeroCirclePortrait(h.def.id, 44)?.let { bmp ->
+                    row.addView(ImageView(this).apply {
+                        setImageBitmap(bmp)
+                        layoutParams = LinearLayout.LayoutParams(34, 34).apply { rightMargin = 8 }
+                    })
+                }
                 val gpm = (h.totalGoldEarned / mins).toInt()
-                list.addView(TextView(this).apply {
-                    text = "${if (h.isPlayer) "★ " else ""}${h.def.name} (Lv${h.level})  |  ${h.kills}/${h.deaths}/${h.assists}  |  LH/DN: ${h.lastHits}/${h.denies}  |  NW: ${h.netWorth} (${gpm} GPM)  |  [$itemsStr]"
+                row.addView(TextView(this).apply {
+                    text = "${if (h.isPlayer) "★ " else ""}${h.def.name} (Lv${h.level})  |  ${h.kills}/${h.deaths}/${h.assists}  |  CS: ${h.lastHits}/${h.denies}  |  NW: ${h.netWorth} (${gpm} GPM)"
                     textSize = 11.5f
                     setTextColor(if (h.isPlayer) 0xFFFDE047.toInt() else 0xFFE2E8F0.toInt())
-                    setPadding(8, 3, 8, 3)
                 })
+                for (slot in h.inventory.take(6)) {
+                    DotaAssetLoader.getItemIcon(slot.itemId)?.let { ibmp ->
+                        row.addView(ImageView(this).apply {
+                            setImageBitmap(ibmp)
+                            layoutParams = LinearLayout.LayoutParams(26, 20).apply { leftMargin = 4 }
+                        })
+                    }
+                }
+                list.addView(row)
             }
         }
         scroll.addView(list)

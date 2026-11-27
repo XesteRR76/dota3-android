@@ -159,4 +159,14 @@ class GameEngineTest {
         world.step(0.05f)
         assertTrue(enemy.pos.x > 4000f && enemy.pos.y > 4000f)
     }
+
+    @Test
+    fun mlbbSmartTargetPriorityHeroCreepTowerDeny() {
+        val world = GameWorld("sniper", mode = GameMode.ALL_PICK_5V5)
+        val ph = world.playerHero
+        val enemyTower = world.towers.first { it.team != ph.team && it.blueprint.tier == 1 }
+        ph.pos.set(enemyTower.pos.x - 200f, enemyTower.pos.y)
+        world.playerSmartAttack(preferCreep = false, preferDeny = true, preferStructure = true)
+        assertEquals(enemyTower.id, ph.attackTargetId)
+    }
 }
