@@ -187,7 +187,7 @@ class GameEngineTest {
 
     @Test
     fun mlbbHudGeometryHasZeroOverlapAndFitsAllPhones() {
-        val resolutions = listOf(1280f to 720f, 1920f to 1080f, 2400f to 1080f, 2560f to 1600f)
+        val resolutions = listOf(1280f to 720f, 1600f to 720f, 1920f to 1080f, 2400f to 1080f, 2560f to 1600f)
         val geo = com.dota3.moba.render.HudGeometry()
         for ((w, h) in resolutions) {
             geo.layout(w, h)
@@ -199,6 +199,7 @@ class GameEngineTest {
             circles.add(geo.tpCenter to geo.utilRadius)
             circles.add(geo.courierCenter to geo.utilRadius)
             circles.add(geo.glyphCenter to geo.utilRadius)
+            circles.add(geo.cancelCenter to geo.cancelRadius)
 
             // Every button must be strictly inside screen bounds!
             for ((idx, pair) in circles.withIndex()) {
@@ -209,7 +210,7 @@ class GameEngineTest {
                 assertTrue("Circle $idx bottom out of bounds at ${w}x${h}", c.y + r <= h)
             }
 
-            // No two buttons may overlap!
+            // No two circular buttons may overlap!
             for (i in circles.indices) {
                 for (j in i + 1 until circles.size) {
                     val d = circles[i].first.distTo(circles[j].first)
@@ -218,9 +219,97 @@ class GameEngineTest {
                 }
             }
 
-            // Item slots & Hero Plate fit inside screen and stay left of glyph button
-            assertTrue("Item bar overlaps glyph at ${w}x${h}", geo.itemSlots[5].right <= geo.glyphCenter.x - geo.utilRadius)
-            assertTrue("Hero plate fits at ${w}x${h}", geo.heroPlate.top >= 0f && geo.heroPlate.bottom <= geo.itemSlots[0].top)
+            // Dota 2 Bottom Console sits cleanly between Joystick and Courier/Glyph column
+            assertTrue("Console left overlaps joystick at ${w}x${h}", geo.heroConsole.left >= geo.joystickRestCenter.x + geo.joystickRadius)
+            assertTrue("Console right overlaps courier/glyph at ${w}x${h}", geo.heroConsole.right <= geo.courierCenter.x - geo.utilRadius)
+            assertTrue("Console overlaps minimap/cam at ${w}x${h}", geo.heroConsole.top > geo.camBtn.bottom)
+            assertTrue("Item bar overlaps courier at ${w}x${h}", geo.itemSlots[5].right <= geo.courierCenter.x - geo.utilRadius)
+
+            // All Dota console boxes fit inside heroConsole and do not overlap one another
+            val consoleBoxes = listOf(
+                geo.portraitBox, geo.attrBox, geo.heroPlate,
+                geo.itemSlots[0], geo.itemSlots[1], geo.itemSlots[2],
+                geo.itemSlots[3], geo.itemSlots[4], geo.itemSlots[5],
+                geo.tpSlot, geo.neutralSlot
+            )
+            for ((bIdx, b) in consoleBoxes.withIndex()) {
+                assertTrue("Box $bIdx left outside console at ${w}x${h}", b.left >= geo.heroConsole.left)
+                assertTrue("Box $bIdx right outside console at ${w}x${h}", b.right <= geo.heroConsole.right)
+                assertTrue("Box $bIdx top outside console at ${w}x${h}", b.top >= geo.heroConsole.top)
+                assertTrue("Box $bIdx bottom outside console at ${w}x${h}", b.bottom <= geo.heroConsole.bottom)
+            }
+            for (i in consoleBoxes.indices) {
+                for (j in i + 1 until consoleBoxes.size) {
+                    assertFalse("Console boxes $i and $j overlap at ${w}x${h}", consoleBoxes[i].overlaps(consoleBoxes[j]))
+                }
+            }
+
+            // +LVL pills stay inside screen and never overlap skill circles or console
+            for (i in 0..3) {
+                val pill = geo.levelUpPills[i]
+                assertTrue("Pill $i out of bounds at ${w}x${h}", pill.left >= 0f && pill.right <= w && pill.top >= 0f && pill.bottom <= h)
+                assertFalse("Pill $i overlaps heroConsole at ${w}x${h}", pill.overlaps(geo.heroConsole))
+                for (j in 0..3) {
+                    val c = geo.abilityCenters[j]
+                    val nearX = c.x.coerceIn(pill.left, pill.right)
+                    val nearY = c.y.coerceIn(pill.top, pill.bottom)
+                    val d = kotlin.math.hypot(c.x - nearX, c.y - nearY)
+                    assertTrue("Pill $i overlaps ability $j at ${w}x${h}: d=$d < ${geo.abilityRadius}", d >= geo.abilityRadius - 1f)
+                }
+            }
         }
+    }
+
+    @Test
+    fun rangedHeroStopsAtAttackRangeWhenChasing() {
+        val world = GameWorld("sniper", mode = GameMode.SANDBOX)
+        val ph = world.playerHero
+        val enemy = world.heroes.first { it.team != ph.team }
+        ph.pos.set(1600f, 2400f)
+        enemy.pos.set(2600f, 2400f)
+
+        world.playerSmartAttack()
+        assertEquals(enemy.id, ph.attackTargetId)
+        assertNotNull("Out-of-range enemy should start chase move", ph.tapMoveTarget)
+
+        repeat(80) { world.step(0.05f) }
+        val dist = ph.pos.distTo(enemy.pos)
+        assertTrue("Sniper must stop near attack range (~750), got dist=$dist", dist > 550f && dist <= ph.cachedAttackRange + 40f)
+        assertNull("tapMoveTarget should clear once in attack range", ph.tapMoveTarget)
+    }
+
+    @Test
+    fun fleeingWithJoystickClearsStaleAttackTarget() {
+        val world = GameWorld("juggernaut", mode = GameMode.SANDBOX)
+        val ph = world.playerHero
+        val enemy = world.heroes.first { it.team != ph.team }
+        ph.pos.set(2000f, 2400f)
+        enemy.pos.set(2120f, 2400f)
+
+        world.playerSmartAttack()
+        assertEquals(enemy.id, ph.attackTargetId)
+
+        // Hold joystick directly away (-X) for 0.55s
+        ph.moveIntent.set(-1f, 0f)
+        repeat(12) { world.step(0.05f) }
+        assertNull("Fleeing away should clear attackTargetId so hero doesn't spin back", ph.attackTargetId)
+    }
+
+    @Test
+    fun xpProgressAndMapTerrainHelpersWork() {
+        assertEquals(0f, DotaMath.xpProgress(0, 1), 0.001f)
+        assertEquals(0.5f, DotaMath.xpProgress(120, 1), 0.001f)
+        assertEquals(1.0f, DotaMath.xpProgress(50000, 30), 0.001f)
+        assertTrue(com.dota3.moba.engine.MapLayout.isInRiver(2400f, 2400f))
+        assertTrue(com.dota3.moba.engine.MapLayout.highGroundFactor(300f, 4500f) > 0.9f)
+        assertEquals(0f, com.dota3.moba.engine.MapLayout.highGroundFactor(2400f, 2400f), 0.01f)
+    }
+
+    @Test
+    fun creepsAnimateWalkAndAttack() {
+        val world = GameWorld("juggernaut", mode = GameMode.MID_1V1)
+        repeat(120) { world.step(0.05f) }
+        assertTrue(world.creeps.isNotEmpty())
+        assertTrue("Creeps should animate walkCycle", world.creeps.any { it.walkCycle > 0f })
     }
 }

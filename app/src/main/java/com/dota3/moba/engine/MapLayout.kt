@@ -150,12 +150,14 @@ object MapLayout {
         NeutralCampBlueprint("dire_ancient", Team.DIRE, 4, Vec2(3620f, 2480f))
     )
 
-    fun isInRiver(x: Float, y: Float): Boolean {
-        // River runs along x ≈ y from (450,450) to (4350,4350) with slight gentle wave
+    fun riverDistance(x: Float, y: Float): Float {
         val wave = kotlin.math.sin((x + y) * 0.0022f) * 70f
         val diagDist = abs((x - y) - wave) / 1.414f
-        return diagDist < 145f && x > 480f && x < 4320f && y > 480f && y < 4320f
+        val endMargin = maxOf(0f, maxOf(480f - x, maxOf(x - 4320f, maxOf(480f - y, y - 4320f))))
+        return diagDist + endMargin
     }
+
+    fun isInRiver(x: Float, y: Float): Boolean = riverDistance(x, y) < 145f
 
     fun isHighGround(x: Float, y: Float): Boolean {
         // Radiant & Dire base plateaus
@@ -169,6 +171,26 @@ object MapLayout {
         return false
     }
 
+    fun highGroundFactor(x: Float, y: Float): Float {
+        // Smooth transition onto Radiant base (x < 1050, y > 3750)
+        val radX = DotaMath.smoothstep(1150f, 940f, x)
+        val radY = DotaMath.smoothstep(3650f, 3860f, y)
+        val radBase = radX * radY
+
+        // Smooth transition onto Dire base (x > 3750, y < 1050)
+        val direX = DotaMath.smoothstep(3650f, 3860f, x)
+        val direY = DotaMath.smoothstep(1150f, 940f, y)
+        val direBase = direX * direY
+
+        // Jungle elevated ridges overlooking river
+        val radRidge = DotaMath.smoothstep(1230f, 1340f, x) * DotaMath.smoothstep(1770f, 1660f, x) *
+            DotaMath.smoothstep(3230f, 3340f, y) * DotaMath.smoothstep(3770f, 3660f, y)
+        val direRidge = DotaMath.smoothstep(3030f, 3140f, x) * DotaMath.smoothstep(3570f, 3460f, x) *
+            DotaMath.smoothstep(1030f, 1140f, y) * DotaMath.smoothstep(1570f, 1460f, y)
+
+        return maxOf(maxOf(radBase, direBase), maxOf(radRidge, direRidge)).coerceIn(0f, 1f)
+    }
+
     fun generateTrees(): MutableList<TreeNode> {
         val trees = mutableListOf<TreeNode>()
         var nextId = 1
@@ -176,8 +198,10 @@ object MapLayout {
         fun addCluster(cx: Float, cy: Float, cols: Int, rows: Int, spacing: Float = 66f) {
             for (r in 0 until rows) {
                 for (c in 0 until cols) {
-                    val tx = cx + (c - cols / 2f) * spacing + ((r % 2) * 18f)
-                    val ty = cy + (r - rows / 2f) * spacing
+                    val jitterX = (((nextId * 37) % 23) - 11).toFloat()
+                    val jitterY = (((nextId * 53) % 23) - 11).toFloat()
+                    val tx = cx + (c - cols / 2f) * spacing + ((r % 2) * 20f) + jitterX
+                    val ty = cy + (r - rows / 2f) * spacing + jitterY
                     if (isValidTreeSpot(tx, ty)) {
                         trees.add(TreeNode(nextId++, Vec2(tx, ty)))
                     }

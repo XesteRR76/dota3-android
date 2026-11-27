@@ -101,6 +101,25 @@ object DotaMath {
 
     fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
 
+    fun smoothstep(edge0: Float, edge1: Float, x: Float): Float {
+        val t = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
+        return t * t * (3f - 2f * t)
+    }
+
+    fun xpProgress(xp: Int, level: Int): Float {
+        if (level >= 30) return 1f
+        val curFloor = XP_FOR_LEVEL[(level - 1).coerceIn(0, XP_FOR_LEVEL.lastIndex)]
+        val nextFloor = XP_FOR_LEVEL[level.coerceIn(1, XP_FOR_LEVEL.lastIndex)]
+        val span = (nextFloor - curFloor).coerceAtLeast(1)
+        return ((xp - curFloor).toFloat() / span).coerceIn(0f, 1f)
+    }
+
+    fun xpForNextLevel(level: Int): Pair<Int, Int> {
+        if (level >= 30) return XP_FOR_LEVEL.last() to XP_FOR_LEVEL.last()
+        return XP_FOR_LEVEL[(level - 1).coerceIn(0, XP_FOR_LEVEL.lastIndex)] to
+            XP_FOR_LEVEL[level.coerceIn(1, XP_FOR_LEVEL.lastIndex)]
+    }
+
     fun distPointToSegment(px: Float, py: Float, ax: Float, ay: Float, bx: Float, by: Float): Float {
         val abx = bx - ax
         val aby = by - ay

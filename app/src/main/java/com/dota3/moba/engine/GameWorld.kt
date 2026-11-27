@@ -496,6 +496,8 @@ class GameWorld(
         // Cooldowns & Statuses
         tickUnitStatuses(h, dt)
         if (h.attackAnimTimer > 0f) h.attackAnimTimer = (h.attackAnimTimer - dt).coerceAtLeast(0f)
+        if (h.castAnimTimer > 0f) h.castAnimTimer = (h.castAnimTimer - dt).coerceAtLeast(0f)
+        h.attackCommandAge += dt
         if (abs(h.moveIntent.x) > 0.05f || abs(h.moveIntent.y) > 0.05f || h.tapMoveTarget != null) {
             h.walkCycle += dt * 12f
         }
@@ -565,9 +567,31 @@ class GameWorld(
             }
         }
 
+        // Clean target lock & stop chase at attack range (prevents ranged heroes walking into melee!)
+        if (h.attackTargetId != null) {
+            val lockTgt = findUnitById(h.attackTargetId)
+            if (lockTgt == null || !lockTgt.alive) {
+                h.attackTargetId = null
+                h.tapMoveTarget = null
+            } else if (h.isPlayer) {
+                val distToTgt = h.pos.distTo(lockTgt.pos)
+                if (h.tapMoveTarget != null && distToTgt <= h.cachedAttackRange * 0.90f + lockTgt.radius * 0.5f) {
+                    h.tapMoveTarget = null
+                } else if (h.tapMoveTarget == null && distToTgt > h.cachedAttackRange + lockTgt.radius + 240f) {
+                    h.attackTargetId = null
+                } else if ((abs(h.moveIntent.x) > 0.1f || abs(h.moveIntent.y) > 0.1f) && h.attackCommandAge > 0.40f) {
+                    val toTgt = (lockTgt.pos - h.pos).normalized()
+                    val mv = h.moveIntent.normalized()
+                    if (toTgt.x * mv.x + toTgt.y * mv.y < -0.45f) {
+                        h.attackTargetId = null
+                    }
+                }
+            }
+        }
+
         // Movement
         if (!h.isStunned() && !h.isRooted() && h.dissimilateTimer <= 0f && h.omnislashTimer <= 0f && h.dismemberTimer <= 0f) {
-            if (h.isPlayer && h.tapMoveTarget != null && h.moveIntent.x == 0f && h.moveIntent.y == 0f) {
+            if (h.isPlayer && h.tapMoveTarget != null && abs(h.moveIntent.x) <= 0.05f && abs(h.moveIntent.y) <= 0.05f) {
                 val t = h.tapMoveTarget!!
                 val dx = t.x - h.pos.x
                 val dy = t.y - h.pos.y
@@ -953,6 +977,7 @@ class GameWorld(
             if (!c.alive) continue
             tickUnitStatuses(c, dt)
             if (c.attackCooldown > 0f) c.attackCooldown = (c.attackCooldown - dt).coerceAtLeast(0f)
+            if (c.attackAnimTimer > 0f) c.attackAnimTimer = (c.attackAnimTimer - dt).coerceAtLeast(0f)
             if (c.isStunned()) continue
 
             val wpList = MapLayout.laneWaypoints[c.lane.coerceIn(0, 2)]
@@ -968,6 +993,8 @@ class GameWorld(
                     c.facingAngle = c.pos.angleTo(target.pos)
                     if (c.attackCooldown <= 0f && !c.isDisarmed()) {
                         c.attackCooldown = 1.0f
+                        c.attackAnimDuration = 0.30f
+                        c.attackAnimTimer = 0.30f
                         if (c.attackRange > 200f) {
                             projectiles.add(
                                 Projectile(
@@ -990,6 +1017,7 @@ class GameWorld(
                 } else {
                     val dir = (target.pos - c.pos).normalized()
                     moveEntitySimple(c, dir.x, dir.y, dt)
+                    c.walkCycle += dt * 10f
                 }
             } else if (!c.isRooted()) {
                 val wp = wpList[c.waypointIndex.coerceIn(0, wpList.lastIndex)]
@@ -1000,6 +1028,7 @@ class GameWorld(
                 } else {
                     val dir = (wp - c.pos).normalized()
                     moveEntitySimple(c, dir.x, dir.y, dt)
+                    c.walkCycle += dt * 10f
                 }
             }
         }
@@ -1011,6 +1040,7 @@ class GameWorld(
             if (!n.alive) continue
             tickUnitStatuses(n, dt)
             if (n.attackCooldown > 0f) n.attackCooldown = (n.attackCooldown - dt).coerceAtLeast(0f)
+            if (n.attackAnimTimer > 0f) n.attackAnimTimer = (n.attackAnimTimer - dt).coerceAtLeast(0f)
             if (n.isStunned()) continue
 
             val distHome = n.pos.distTo(n.homePos)
@@ -1020,17 +1050,22 @@ class GameWorld(
             if (attacker != null && distHome < 520f && (n.hp < n.maxHp || attacker.pos.distTo(n.pos) < 220f)) {
                 val d = n.pos.distTo(attacker.pos)
                 if (d <= 125f) {
+                    n.facingAngle = n.pos.angleTo(attacker.pos)
                     if (n.attackCooldown <= 0f) {
                         n.attackCooldown = 1.25f
+                        n.attackAnimDuration = 0.34f
+                        n.attackAnimTimer = 0.34f
                         applyDamage(attacker, n.attackDamage, DamageType.PHYSICAL, null, showFloat = false)
                     }
                 } else if (!n.isRooted()) {
                     val dir = (attacker.pos - n.pos).normalized()
                     moveEntitySimple(n, dir.x, dir.y, dt)
+                    n.walkCycle += dt * 9f
                 }
             } else if (distHome > 25f && !n.isRooted()) {
                 val dir = (n.homePos - n.pos).normalized()
                 moveEntitySimple(n, dir.x, dir.y, dt)
+                n.walkCycle += dt * 9f
                 n.hp = (n.hp + 20f * dt).coerceAtMost(n.maxHp)
             }
         }
@@ -1049,14 +1084,18 @@ class GameWorld(
         tickUnitStatuses(roshan, dt)
         if (roshan.attackCooldown > 0f) roshan.attackCooldown = (roshan.attackCooldown - dt).coerceAtLeast(0f)
         if (roshan.slamCooldown > 0f) roshan.slamCooldown = (roshan.slamCooldown - dt).coerceAtLeast(0f)
+        if (roshan.attackAnimTimer > 0f) roshan.attackAnimTimer = (roshan.attackAnimTimer - dt).coerceAtLeast(0f)
 
         val target = heroes.filter { it.alive && it.pos.distTo(MapLayout.roshanPitPos) < 260f && !it.isInvisible() }
             .minByOrNull { it.pos.distTo(roshan.pos) }
         if (target != null && !roshan.isStunned()) {
             val d = roshan.pos.distTo(target.pos)
             if (d <= 155f) {
+                roshan.facingAngle = roshan.pos.angleTo(target.pos)
                 if (roshan.slamCooldown <= 0f) {
                     roshan.slamCooldown = 7f
+                    roshan.attackAnimDuration = 0.42f
+                    roshan.attackAnimTimer = 0.42f
                     for (h in heroes.filter { it.alive && it.pos.distTo(roshan.pos) < 240f }) {
                         applyDamage(h, 130f + roshan.deathsCount * 40f, DamageType.MAGICAL, null)
                         h.addStatus(StatusType.SLOW, 2.0f, 0.35f)
@@ -1064,16 +1103,20 @@ class GameWorld(
                     spawnParticles(roshan.pos, 0xFFFF5722.toInt(), 16, 220f, ring = true)
                 } else if (roshan.attackCooldown <= 0f) {
                     roshan.attackCooldown = 0.85f
+                    roshan.attackAnimDuration = 0.34f
+                    roshan.attackAnimTimer = 0.34f
                     applyDamage(target, roshan.attackDamage, DamageType.PHYSICAL, null)
                     if (rng.nextFloat() < 0.16f) target.addStatus(StatusType.STUN, 1.0f)
                 }
             } else {
                 val dir = (target.pos - roshan.pos).normalized()
                 moveEntitySimple(roshan, dir.x, dir.y, dt)
+                roshan.walkCycle += dt * 7f
             }
         } else if (roshan.pos.distTo(MapLayout.roshanPitPos) > 30f) {
             val dir = (MapLayout.roshanPitPos - roshan.pos).normalized()
             moveEntitySimple(roshan, dir.x, dir.y, dt)
+            roshan.walkCycle += dt * 7f
             roshan.hp = (roshan.hp + 55f * dt).coerceAtMost(roshan.maxHp)
         }
     }
@@ -1498,6 +1541,7 @@ class GameWorld(
         val dur = ab.duration[(lvl - 1).coerceIn(0, ab.duration.lastIndex)]
         val angle = hero.pos.angleTo(aimPoint)
         hero.facingAngle = angle
+        hero.castAnimTimer = 0.32f
 
         if (hero.isPlayer) {
             SoundEngine.play(if (ab.isUltimate) SoundCue.ULTIMATE else SoundCue.SPELL_CAST)
@@ -2692,7 +2736,12 @@ class GameWorld(
     }
 
     // Smart Attack helpers for MLBB-style buttons (Hero / Creep / Tower-or-Deny)
-    fun playerSmartAttack(preferCreep: Boolean = false, preferDeny: Boolean = false, preferStructure: Boolean = false) {
+    fun playerSmartAttack(
+        preferCreep: Boolean = false,
+        preferDeny: Boolean = false,
+        preferStructure: Boolean = false,
+        silentNoTarget: Boolean = false
+    ) {
         val h = playerHero
         if (!h.alive) return
         val searchR = h.cachedAttackRange + 320f
@@ -2701,6 +2750,8 @@ class GameWorld(
                 .minByOrNull { it.hp }
             if (denyCreep != null) {
                 h.attackTargetId = denyCreep.id
+                h.attackCommandAge = 0f
+                h.facingAngle = h.pos.angleTo(denyCreep.pos)
                 if (denyCreep.pos.distTo(h.pos) > h.cachedAttackRange) h.tapMoveTarget = denyCreep.pos.copyVec()
                 return
             }
@@ -2708,6 +2759,8 @@ class GameWorld(
                 .minByOrNull { it.hp }
             if (denyTower != null) {
                 h.attackTargetId = denyTower.id
+                h.attackCommandAge = 0f
+                h.facingAngle = h.pos.angleTo(denyTower.pos)
                 return
             }
         }
@@ -2728,9 +2781,10 @@ class GameWorld(
         }
         if (target != null) {
             h.attackTargetId = target.id
+            h.attackCommandAge = 0f
             h.facingAngle = h.pos.angleTo(target.pos)
             if (target.pos.distTo(h.pos) > h.cachedAttackRange) h.tapMoveTarget = target.pos.copyVec()
-        } else {
+        } else if (!silentNoTarget) {
             if (h.attackAnimTimer <= 0f) {
                 h.attackAnimDuration = 0.22f
                 h.attackAnimTimer = 0.22f

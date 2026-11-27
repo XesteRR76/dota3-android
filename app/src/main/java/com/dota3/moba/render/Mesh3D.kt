@@ -156,7 +156,178 @@ class Mesh3D(
                 idxList.add((topCenterIdx + 1 + i + 1).toShort())
                 idxList.add((topCenterIdx + 1 + i).toShort())
             }
+            // Bottom cap
+            val botCenterIdx = (vertsList.size / 9).toShort()
+            addV(0f, -halfH, 0f, 0f, -1f, 0f)
+            for (i in 0..segs) {
+                val a = (i.toFloat() / segs) * 6.283185f
+                addV(cos(a) * botRadius, -halfH, sin(a) * botRadius, 0f, -1f, 0f)
+            }
+            for (i in 0 until segs) {
+                idxList.add(botCenterIdx)
+                idxList.add((botCenterIdx + 1 + i).toShort())
+                idxList.add((botCenterIdx + 1 + i + 1).toShort())
+            }
             return Mesh3D(vertsList.toFloatArray(), idxList.toShortArray())
+        }
+
+        fun createCrystal(segs: Int = 6, radius: Float = 0.5f, height: Float = 1.0f): Mesh3D {
+            val verts = ArrayList<Float>()
+            val idx = ArrayList<Short>()
+            val halfH = height * 0.5f
+            fun addTri(
+                x0: Float, y0: Float, z0: Float,
+                x1: Float, y1: Float, z1: Float,
+                x2: Float, y2: Float, z2: Float
+            ) {
+                val ux = x1 - x0; val uy = y1 - y0; val uz = z1 - z0
+                val vx = x2 - x0; val vy = y2 - y0; val vz = z2 - z0
+                var nx = uy * vz - uz * vy
+                var ny = uz * vx - ux * vz
+                var nz = ux * vy - uy * vx
+                val len = sqrt(nx * nx + ny * ny + nz * nz).coerceAtLeast(0.001f)
+                nx /= len; ny /= len; nz /= len
+                val base = (verts.size / 9).toShort()
+                verts.add(x0); verts.add(y0); verts.add(z0); verts.add(nx); verts.add(ny); verts.add(nz); verts.add(1f); verts.add(1f); verts.add(1f)
+                verts.add(x1); verts.add(y1); verts.add(z1); verts.add(nx); verts.add(ny); verts.add(nz); verts.add(1f); verts.add(1f); verts.add(1f)
+                verts.add(x2); verts.add(y2); verts.add(z2); verts.add(nx); verts.add(ny); verts.add(nz); verts.add(1f); verts.add(1f); verts.add(1f)
+                idx.add(base); idx.add((base + 1).toShort()); idx.add((base + 2).toShort())
+            }
+            for (i in 0 until segs) {
+                val a0 = (i.toFloat() / segs) * 6.283185f
+                val a1 = ((i + 1).toFloat() / segs) * 6.283185f
+                val x0 = cos(a0) * radius; val z0 = sin(a0) * radius
+                val x1 = cos(a1) * radius; val z1 = sin(a1) * radius
+                addTri(0f, halfH, 0f, x1, 0.08f * halfH, z1, x0, 0.08f * halfH, z0)
+                addTri(0f, -halfH, 0f, x0, 0.08f * halfH, z0, x1, 0.08f * halfH, z1)
+            }
+            return Mesh3D(verts.toFloatArray(), idx.toShortArray())
+        }
+
+        fun createTorus(majorSegs: Int = 24, minorSegs: Int = 8, majorR: Float = 0.92f, minorR: Float = 0.08f): Mesh3D {
+            val verts = ArrayList<Float>()
+            val idx = ArrayList<Short>()
+            for (i in 0..majorSegs) {
+                val u = (i.toFloat() / majorSegs) * 6.283185f
+                val cu = cos(u); val su = sin(u)
+                for (j in 0..minorSegs) {
+                    val v = (j.toFloat() / minorSegs) * 6.283185f
+                    val cv = cos(v); val sv = sin(v)
+                    val x = (majorR + minorR * cv) * cu
+                    val y = minorR * sv
+                    val z = (majorR + minorR * cv) * su
+                    val nx = cv * cu
+                    val ny = sv
+                    val nz = cv * su
+                    verts.add(x); verts.add(y); verts.add(z)
+                    verts.add(nx); verts.add(ny); verts.add(nz)
+                    verts.add(1f); verts.add(1f); verts.add(1f)
+                }
+            }
+            val row = minorSegs + 1
+            for (i in 0 until majorSegs) {
+                for (j in 0 until minorSegs) {
+                    val a = (i * row + j).toShort()
+                    val b = ((i + 1) * row + j).toShort()
+                    val c = ((i + 1) * row + j + 1).toShort()
+                    val d = (i * row + j + 1).toShort()
+                    idx.add(a); idx.add(b); idx.add(c)
+                    idx.add(a); idx.add(c); idx.add(d)
+                }
+            }
+            return Mesh3D(verts.toFloatArray(), idx.toShortArray())
+        }
+
+        fun createCurvedBlade(): Mesh3D {
+            // Sleek forward-extending (+z) curved katana/glaive blade centered near hilt at z=0..1
+            val verts = ArrayList<Float>()
+            val idx = ArrayList<Short>()
+            val segs = 6
+            for (i in 0..segs) {
+                val t = i.toFloat() / segs
+                val z = t * 1.0f
+                val curveX = t * t * 0.16f
+                val halfH = (1f - t * 0.72f) * 0.08f
+                val halfW = (1f - t * 0.85f) * 0.035f
+                // 4 points around blade cross-section (spine top, edge right, spine bot, edge left)
+                fun pv(x: Float, y: Float, zPos: Float, nx: Float, ny: Float, nz: Float) {
+                    verts.add(x); verts.add(y); verts.add(zPos)
+                    verts.add(nx); verts.add(ny); verts.add(nz)
+                    verts.add(1f); verts.add(1f); verts.add(1f)
+                }
+                pv(curveX, halfH, z, 0f, 1f, 0f)
+                pv(curveX + halfW, 0f, z, 1f, 0f, 0f)
+                pv(curveX, -halfH, z, 0f, -1f, 0f)
+                pv(curveX - halfW, 0f, z, -1f, 0f, 0f)
+            }
+            for (i in 0 until segs) {
+                val b0 = i * 4
+                val b1 = (i + 1) * 4
+                for (k in 0 until 4) {
+                    val kNext = (k + 1) % 4
+                    idx.add((b0 + k).toShort()); idx.add((b1 + k).toShort()); idx.add((b1 + kNext).toShort())
+                    idx.add((b0 + k).toShort()); idx.add((b1 + kNext).toShort()); idx.add((b0 + kNext).toShort())
+                }
+            }
+            return Mesh3D(verts.toFloatArray(), idx.toShortArray())
+        }
+
+        fun createCrescentArc(segs: Int = 14, innerR: Float = 0.58f, outerR: Float = 1.0f, spanDeg: Float = 145f): Mesh3D {
+            val verts = ArrayList<Float>()
+            val idx = ArrayList<Short>()
+            val halfSpan = Math.toRadians(spanDeg * 0.5).toFloat()
+            for (i in 0..segs) {
+                val t = i.toFloat() / segs
+                val a = -halfSpan + t * halfSpan * 2f
+                val ca = cos(a); val sa = sin(a)
+                val taper = sin(t * Math.PI.toFloat())
+                val rIn = outerR - (outerR - innerR) * taper
+                verts.add(sa * rIn); verts.add(0f); verts.add(ca * rIn)
+                verts.add(0f); verts.add(1f); verts.add(0f)
+                verts.add(1f); verts.add(1f); verts.add(1f)
+
+                verts.add(sa * outerR); verts.add(0f); verts.add(ca * outerR)
+                verts.add(0f); verts.add(1f); verts.add(0f)
+                verts.add(1f); verts.add(1f); verts.add(1f)
+            }
+            for (i in 0 until segs) {
+                val i0 = (i * 2).toShort()
+                val o0 = (i * 2 + 1).toShort()
+                val i1 = ((i + 1) * 2).toShort()
+                val o1 = ((i + 1) * 2 + 1).toShort()
+                idx.add(i0); idx.add(o1); idx.add(i1)
+                idx.add(i0); idx.add(o0); idx.add(o1)
+            }
+            return Mesh3D(verts.toFloatArray(), idx.toShortArray())
+        }
+
+        fun createDome(rings: Int = 7, sectors: Int = 16, radius: Float = 0.5f): Mesh3D {
+            val verts = ArrayList<Float>()
+            val idx = ArrayList<Short>()
+            for (r in 0..rings) {
+                val v = (r.toFloat() / rings) * (Math.PI.toFloat() * 0.5f)
+                val sp = sin(v); val cp = cos(v)
+                for (s in 0..sectors) {
+                    val theta = (s.toFloat() / sectors) * 6.283185f
+                    val nx = sp * cos(theta)
+                    val ny = cp
+                    val nz = sp * sin(theta)
+                    verts.add(nx * radius); verts.add(ny * radius); verts.add(nz * radius)
+                    verts.add(nx); verts.add(ny); verts.add(nz)
+                    verts.add(1f); verts.add(1f); verts.add(1f)
+                }
+            }
+            for (r in 0 until rings) {
+                for (s in 0 until sectors) {
+                    val a = (r * (sectors + 1) + s).toShort()
+                    val b = ((r + 1) * (sectors + 1) + s).toShort()
+                    val c = ((r + 1) * (sectors + 1) + s + 1).toShort()
+                    val d = (r * (sectors + 1) + s + 1).toShort()
+                    idx.add(a); idx.add(b); idx.add(c)
+                    idx.add(a); idx.add(c); idx.add(d)
+                }
+            }
+            return Mesh3D(verts.toFloatArray(), idx.toShortArray())
         }
 
         fun createSphere(rings: Int = 10, sectors: Int = 14, radius: Float = 0.5f): Mesh3D {

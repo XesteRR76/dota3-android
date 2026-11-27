@@ -2,12 +2,17 @@ package com.dota3.moba.ui
 
 import android.content.Context
 import android.graphics.*
+import android.os.SystemClock
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import com.dota3.moba.core.DotaAssetLoader
+import com.dota3.moba.core.DotaMath
 import com.dota3.moba.core.Vec2
 import com.dota3.moba.data.ItemCatalog
 import com.dota3.moba.engine.*
+import com.dota3.moba.model.PrimaryAttribute
+import com.dota3.moba.model.StatusType
 import com.dota3.moba.model.TargetType
 import com.dota3.moba.model.Team
 import com.dota3.moba.render.BoxBounds
@@ -35,6 +40,7 @@ class MlbbHudOverlayView(
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val rectF = RectF()
+    private val clipPath = Path()
     private var minimapBg: Bitmap? = null
 
     // Touch state
@@ -46,13 +52,25 @@ class MlbbHudOverlayView(
     private var aimPointerId = -1
     private var aimStartPos = Vec2()
     private var aimCurrentPos = Vec2()
+    private var aimManualMoved = false
     private var aimingCancelHovered = false
+
+    private var attackPointerId = -1
+    private var heldAttackMode = -1 // 0=hero, 1=creep, 2=tower/deny
+    private var lastAttackRepeatMs = 0L
 
     private var minimapPointerId = -1
     private var panPointerId = -1
     private var panLastPos = Vec2()
 
     private var matchEndNotified = false
+
+    private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScale(detector: ScaleGestureDetector): Boolean {
+            renderer3D.cameraZoomDist = (renderer3D.cameraZoomDist / detector.scaleFactor).coerceIn(520f, 980f)
+            return true
+        }
+    })
 
     init {
         isClickable = true
@@ -69,19 +87,19 @@ class MlbbHudOverlayView(
         val bg = Paint().apply {
             shader = LinearGradient(
                 0f, s.toFloat(), s.toFloat(), 0f,
-                intArrayOf(0xFF172B1E.toInt(), 0xFF1E293B.toInt(), 0xFF31171B.toInt()),
+                intArrayOf(0xFF163222.toInt(), 0xFF1D293B.toInt(), 0xFF36181E.toInt()),
                 floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP
             )
         }
         c.drawRect(0f, 0f, s.toFloat(), s.toFloat(), bg)
 
         val rp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFF165B82.toInt(); style = Paint.Style.STROKE; strokeWidth = 260f * scale
+            color = 0xFF196792.toInt(); style = Paint.Style.STROKE; strokeWidth = 250f * scale
         }
         c.drawLine(450f * scale, 450f * scale, 4350f * scale, 4350f * scale, rp)
 
         val lp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xFF475569.toInt(); style = Paint.Style.STROKE; strokeWidth = 170f * scale; strokeCap = Paint.Cap.ROUND
+            color = 0xFF566376.toInt(); style = Paint.Style.STROKE; strokeWidth = 170f * scale; strokeCap = Paint.Cap.ROUND
         }
         for (lane in MapLayout.laneWaypoints) {
             val path = Path()
@@ -100,24 +118,43 @@ class MlbbHudOverlayView(
         ensureMinimapBg()
         geo.layout(w, h)
 
+        // Hold-to-attack repeat while ATK/CREEP/TWR button is pressed
+        if (heldAttackMode >= 0 && attackPointerId != -1) {
+            val nowMs = SystemClock.uptimeMillis()
+            if (nowMs - lastAttackRepeatMs >= 260L) {
+                lastAttackRepeatMs = nowMs
+                when (heldAttackMode) {
+                    0 -> world.playerSmartAttack(preferCreep = false, preferDeny = false, silentNoTarget = true)
+                    1 -> world.playerSmartAttack(preferCreep = true, preferDeny = false, silentNoTarget = true)
+                    2 -> world.playerSmartAttack(preferCreep = false, preferDeny = true, preferStructure = true, silentNoTarget = true)
+                }
+            }
+        }
+
         if (world.matchOver && !matchEndNotified) {
             matchEndNotified = true
             post { listener.onMatchEnded() }
         }
 
-        // 1. Projected 3D HP/MP Bars, Hero Portraits & Floating Damage/Crit Text
+        // 1. Projected 3D HP/MP Bars & Floating Damage/Crit Numbers
         drawProjectedWorldOverlays(canvas, uiScale)
 
-        // 2. Minimap, Camera Lock & MLBB Quick-Buy Cards
+        // 2. Minimap, Camera Lock, Zoom & Quick-Buy Cards
         drawMinimap(canvas)
-        drawBoxBtn(canvas, geo.camBtn, if (renderer3D.cameraLocked) "CAM LOCKED" else "FREE CAM",
+        drawBoxBtn(canvas, geo.camBtn, if (renderer3D.cameraLocked) "CAM LOCK" else "FREE CAM",
             0xCC111827.toInt(), if (renderer3D.cameraLocked) 0xFF38BDF8.toInt() else 0xFFF59E0B.toInt())
+        val zoomTag = when {
+            renderer3D.cameraZoomDist < 640f -> "Z+"
+            renderer3D.cameraZoomDist > 780f -> "Z-"
+            else -> "ZOOM"
+        }
+        drawBoxBtn(canvas, geo.zoomBtn, zoomTag, 0xCC111827.toInt(), 0xFF94A3B8.toInt())
         drawQuickBuyCards(canvas)
 
         // 3. Top Match Header
         drawTopHeader(canvas, w, h)
 
-        // 4. Right Menu Buttons
+        // 4. Top-Right Menu Buttons
         val ph = world.playerHero
         drawBoxBtn(canvas, geo.shopBtn, "SHOP ${ph.gold}g", 0xDD78350F.toInt(), 0xFFF59E0B.toInt())
         val hasTalent = ph.availableTalentTier() != null
@@ -127,20 +164,20 @@ class MlbbHudOverlayView(
         drawBoxBtn(canvas, geo.statsBtn, "SCORE", 0xCC1E293B.toInt(), 0xFF94A3B8.toInt())
         drawBoxBtn(canvas, geo.pauseBtn, "MENU", 0xCC1E293B.toInt(), 0xFF94A3B8.toInt())
 
-        // 5. Left MLBB Joystick
+        // 5. Left Ergonomic Joystick
         drawJoystick(canvas)
 
-        // 6. Bottom-Center Hero HP/MP/Stats Plate & 6 Active Item Slots
-        drawHeroStatusPlate(canvas)
-        drawInventoryBar(canvas, uiScale)
+        // 6. Bottom-Center Authentic Dota 2 Hero Console (Portrait, Level, XP, Attributes, Stats, HP/MP, 3x2 Items, TP, Neutral)
+        drawActiveBuffsStrip(canvas, uiScale)
+        drawDotaHeroConsole(canvas, uiScale)
 
-        // 7. Right MLBB Attack Cluster, Ability Arc & Utilities
+        // 7. Right MLBB Attack Cluster, Skill Fan & Courier/Glyph
         drawAttackCluster(canvas)
         drawAbilityArc(canvas, uiScale)
         drawUtilityButtons(canvas)
 
-        // 8. Cancel X zone during drag-aim
-        if (renderer3D.aimingAbilityIdx in 0..3) {
+        // 8. Cancel X zone during skill or item drag-aim
+        if (renderer3D.aimingAbilityIdx in 0..3 || renderer3D.aimingItemSlotIdx >= 0) {
             val bg = if (aimingCancelHovered) 0xEEEF4444.toInt() else 0xCC7F1D1D.toInt()
             drawCircleBtn(canvas, geo.cancelCenter, geo.cancelRadius, "CANCEL X", bg, 0xFFFCA5A5.toInt(), null)
         }
@@ -154,34 +191,37 @@ class MlbbHudOverlayView(
     private fun drawProjectedWorldOverlays(canvas: Canvas, uiScale: Float) {
         for (bar in renderer3D.projectedBars) {
             if (bar.isHero) {
-                val barW = 72f * uiScale
+                val barW = 74f * uiScale
                 val hpH = 7.5f * uiScale
                 val mpH = 4.2f * uiScale
                 val left = bar.sx - barW * 0.5f
                 val hpTop = bar.sy - 14f * uiScale
 
-                bar.heroId?.let { hid ->
-                    DotaAssetLoader.getHeroCirclePortrait(hid, 48)?.let { bmp ->
-                        val pr = 12f * uiScale
-                        val cx = left - pr - 3f
-                        val cy = hpTop + hpH * 0.6f
-                        canvas.drawBitmap(bmp, null, RectF(cx - pr, cy - pr, cx + pr, cy + pr), paint)
-                        paint.style = Paint.Style.STROKE
-                        paint.strokeWidth = 2f * uiScale * 0.6f
-                        paint.color = bar.barColor
-                        canvas.drawCircle(cx, cy, pr, paint)
-                    }
-                }
+                // Clean Dota-style level box on left of HP bar without overlapping label
+                val lvlR = 9.5f * uiScale
+                val lx = left - lvlR - 3f
+                val ly = hpTop + (hpH + mpH) * 0.5f
+                paint.style = Paint.Style.FILL
+                paint.color = 0xEE0F172A.toInt()
+                canvas.drawCircle(lx, ly, lvlR, paint)
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 1.8f
+                paint.color = 0xFFF59E0B.toInt()
+                canvas.drawCircle(lx, ly, lvlR, paint)
+                textPaint.color = 0xFFFDE047.toInt()
+                textPaint.textSize = 9.5f * uiScale
+                textPaint.textAlign = Paint.Align.CENTER
+                textPaint.typeface = Typeface.DEFAULT_BOLD
+                canvas.drawText("${bar.level}", lx, ly + 3.5f * uiScale, textPaint)
 
                 drawBar(canvas, left, hpTop, barW, hpH, bar.hp, bar.maxHp, bar.barColor, bar.notchStep)
                 drawBar(canvas, left, hpTop + hpH + 1.5f, barW, mpH, bar.mana, bar.maxMana, 0xFF38BDF8.toInt(), 0f)
 
                 textPaint.color = Color.WHITE
-                textPaint.textSize = 11.5f * uiScale
+                textPaint.textSize = 11f * uiScale
                 textPaint.textAlign = Paint.Align.CENTER
-                textPaint.typeface = Typeface.DEFAULT_BOLD
                 textPaint.setShadowLayer(3f, 0f, 1.5f, Color.BLACK)
-                canvas.drawText("Lv${bar.level} ${bar.label}", bar.sx, hpTop - 4f, textPaint)
+                canvas.drawText(bar.label, bar.sx, hpTop - 4.5f, textPaint)
                 textPaint.clearShadowLayer()
                 textPaint.typeface = Typeface.DEFAULT
             } else {
@@ -279,7 +319,7 @@ class MlbbHudOverlayView(
             (cx + 18f).coerceAtMost(mm.right), (cy + 12f).coerceAtMost(mm.bottom), paint)
 
         paint.strokeWidth = 2.5f
-        paint.color = 0xFFF59E0B.toInt()
+        paint.color = 0xFFD4A037.toInt()
         canvas.drawRect(rectF, paint)
     }
 
@@ -295,11 +335,11 @@ class MlbbHudOverlayView(
             rectF.set(b.left, b.top, b.right, b.bottom)
             paint.style = Paint.Style.FILL
             paint.color = if (canAfford) 0xDD064E3B.toInt() else 0xCC111827.toInt()
-            canvas.drawRoundRect(rectF, 10f, 10f, paint)
+            canvas.drawRoundRect(rectF, 9f, 9f, paint)
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 2f
             paint.color = if (canAfford) 0xFF34D399.toInt() else 0xFF475569.toInt()
-            canvas.drawRoundRect(rectF, 10f, 10f, paint)
+            canvas.drawRoundRect(rectF, 9f, 9f, paint)
 
             DotaAssetLoader.getItemIcon(item.id)?.let { bmp ->
                 val pad = 4f
@@ -366,66 +406,338 @@ class MlbbHudOverlayView(
         canvas.drawCircle(knob.x, knob.y, rOuter * 0.42f, paint)
     }
 
-    private fun drawHeroStatusPlate(canvas: Canvas) {
+    private fun drawActiveBuffsStrip(canvas: Canvas, uiScale: Float) {
         val ph = world.playerHero
-        val p = geo.heroPlate
-        if (p.width() < 120f) return
-        rectF.set(p.left, p.top, p.right, p.bottom)
-        paint.style = Paint.Style.FILL
-        paint.color = 0xCC0D1320.toInt()
-        canvas.drawRoundRect(rectF, 10f, 10f, paint)
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 1.8f
-        paint.color = 0xFF334155.toInt()
-        canvas.drawRoundRect(rectF, 10f, 10f, paint)
+        val pills = ArrayList<Triple<String, Int, Int>>(6)
+        if (ph.hasAegis) pills.add(Triple("AEGIS", 0xFFD97706.toInt(), 0xFFFEF08A.toInt()))
+        if (ph.hasStatus(StatusType.MAGIC_IMMUNE)) pills.add(Triple("BKB", 0xFFB45309.toInt(), 0xFFFDE047.toInt()))
+        if (ph.hasStatus(StatusType.BLADE_FURY)) pills.add(Triple("SPIN", 0xFFC2410C.toInt(), 0xFFFED7AA.toInt()))
+        if (ph.hasStatus(StatusType.DOUBLE_DAMAGE)) pills.add(Triple("2X DMG", 0xFF0369A1.toInt(), 0xFFBAE6FD.toInt()))
+        if (ph.hasStatus(StatusType.HASTE)) pills.add(Triple("HASTE", 0xFF991B1B.toInt(), 0xFFFECACA.toInt()))
+        if (ph.hasStatus(StatusType.REGEN)) pills.add(Triple("REGEN", 0xFF166534.toInt(), 0xFFBBF7D0.toInt()))
+        if (ph.hasStatus(StatusType.BLUR) || ph.hasStatus(StatusType.INVISIBLE)) pills.add(Triple("INVIS", 0xFF475569.toInt(), 0xFFE2E8F0.toInt()))
+        if (ph.hasStatus(StatusType.SATANIC)) pills.add(Triple("SATANIC", 0xFF7F1D1D.toInt(), 0xFFFCA5A5.toInt()))
+        if (ph.isStunned()) pills.add(Triple("STUN", 0xFF991B1B.toInt(), 0xFFFFFFFF.toInt()))
+        if (ph.isSilenced()) pills.add(Triple("SILENCE", 0xFF6B21A8.toInt(), 0xFFE9D5FF.toInt()))
+        if (pills.isEmpty()) return
 
-        val padX = 8f
-        val innerW = p.width() - padX * 2f
-        val rowH = (p.height() - 10f) / 3f
-
-        textPaint.textAlign = Paint.Align.LEFT
-        textPaint.typeface = Typeface.DEFAULT_BOLD
-        textPaint.textSize = (rowH * 0.68f).coerceIn(11f, 20f)
-        textPaint.color = 0xFFF5B041.toInt()
-        val tags = buildString {
-            append("Lv${ph.level}  DMG:${ph.cachedDamage.toInt()}  ARM:${ph.armor.toInt()}  MS:${ph.cachedMoveSpeed.toInt()}")
-            if (ph.hasScepter) append(" [AGH]")
-            if (ph.hasShard) append(" [SHD]")
-            if (ph.hasAegis) append(" [AEGIS]")
+        val pillH = 16f * uiScale
+        val pillW = 54f * uiScale
+        var x = geo.heroConsole.left + 8f
+        val y = geo.heroConsole.top - pillH - 4f
+        for ((lbl, bg, fg) in pills.take(6)) {
+            rectF.set(x, y, x + pillW, y + pillH)
+            paint.style = Paint.Style.FILL
+            paint.color = bg
+            canvas.drawRoundRect(rectF, 6f, 6f, paint)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.4f
+            paint.color = fg
+            canvas.drawRoundRect(rectF, 6f, 6f, paint)
+            textPaint.color = fg
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.typeface = Typeface.DEFAULT_BOLD
+            textPaint.textSize = 9.2f * uiScale
+            canvas.drawText(lbl, rectF.centerX(), rectF.centerY() + 3.2f * uiScale, textPaint)
+            x += pillW + 4f * uiScale
         }
-        canvas.drawText(tags, p.left + padX, p.top + rowH * 0.78f, textPaint)
+        textPaint.typeface = Typeface.DEFAULT
+    }
+
+    private fun drawDotaHeroConsole(canvas: Canvas, uiScale: Float) {
+        val ph = world.playerHero
+        val c = geo.heroConsole
+        if (c.width() < 160f) return
+
+        // 1. Outer Dota 2 Console Frame
+        rectF.set(c.left, c.top, c.right, c.bottom)
+        paint.style = Paint.Style.FILL
+        paint.color = 0xEA0B1019.toInt()
+        canvas.drawRoundRect(rectF, 12f, 12f, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 2.2f
+        paint.color = 0xFFD4A037.toInt()
+        canvas.drawRoundRect(rectF, 12f, 12f, paint)
+
+        // 2. Hero Portrait + Primary Attribute + Level Badge + XP Bar
+        val pb = geo.portraitBox
+        rectF.set(pb.left, pb.top, pb.right, pb.bottom)
+        DotaAssetLoader.getHeroPortrait(ph.def.id)?.let { bmp ->
+            canvas.save()
+            clipPath.reset()
+            clipPath.addRoundRect(rectF, 8f, 8f, Path.Direction.CW)
+            canvas.clipPath(clipPath)
+            canvas.drawBitmap(bmp, null, rectF, paint)
+            canvas.restore()
+        } ?: run {
+            paint.style = Paint.Style.FILL
+            paint.color = ph.def.primaryColor
+            canvas.drawRoundRect(rectF, 8f, 8f, paint)
+        }
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 2f
+        paint.color = 0xFFD4A037.toInt()
+        canvas.drawRoundRect(rectF, 8f, 8f, paint)
+
+        // Primary attribute badge top-left of portrait
+        val attrR = (pb.height() * 0.14f).coerceIn(7f, 13f)
+        paint.style = Paint.Style.FILL
+        paint.color = ph.def.attribute.colorHex
+        canvas.drawCircle(pb.left + attrR + 3f, pb.top + attrR + 3f, attrR, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 1.4f
+        paint.color = Color.WHITE
+        canvas.drawCircle(pb.left + attrR + 3f, pb.top + attrR + 3f, attrR, paint)
+        textPaint.color = Color.WHITE
+        textPaint.textAlign = Paint.Align.CENTER
+        textPaint.typeface = Typeface.DEFAULT_BOLD
+        textPaint.textSize = attrR * 0.92f
+        canvas.drawText(ph.def.attribute.shortLabel.take(1), pb.left + attrR + 3f, pb.top + attrR * 1.32f + 3f, textPaint)
+
+        // Golden Level Circle bottom-right of portrait
+        val lvlR = (pb.height() * 0.19f).coerceIn(9f, 17f)
+        val lvlCx = pb.right - lvlR - 2f
+        val lvlCy = pb.bottom - lvlR - 2f
+        paint.style = Paint.Style.FILL
+        paint.color = 0xEE111827.toInt()
+        canvas.drawCircle(lvlCx, lvlCy, lvlR, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 2f
+        paint.color = 0xFFFACC15.toInt()
+        canvas.drawCircle(lvlCx, lvlCy, lvlR, paint)
+        textPaint.color = 0xFFFDE047.toInt()
+        textPaint.textSize = lvlR * 1.05f
+        canvas.drawText("${ph.level}", lvlCx, lvlCy + lvlR * 0.36f, textPaint)
+
+        // XP Bar right below portrait
+        val xb = geo.xpBarBox
+        val xpPct = DotaMath.xpProgress(ph.xp, ph.level)
+        paint.style = Paint.Style.FILL
+        paint.color = 0xFF1E293B.toInt()
+        rectF.set(xb.left, xb.top, xb.right, xb.bottom)
+        canvas.drawRoundRect(rectF, 4f, 4f, paint)
+        paint.color = 0xFFEAB308.toInt()
+        rectF.set(xb.left, xb.top, xb.left + xb.width() * xpPct, xb.bottom)
+        canvas.drawRoundRect(rectF, 4f, 4f, paint)
+        val (_, nextXp) = DotaMath.xpForNextLevel(ph.level)
+        textPaint.color = Color.WHITE
+        textPaint.textSize = (xb.height() * 0.72f).coerceIn(7.5f, 12f)
+        canvas.drawText(if (ph.level >= 30) "MAX LVL" else "XP ${ph.xp}/$nextXp", xb.centerX(), xb.centerY() + textPaint.textSize * 0.34f, textPaint)
+
+        // 3. Attributes (STR/AGI/INT), Combat Stats, Talent Tree & Scepter/Shard
+        val ab = geo.attrBox
+        val tb = geo.talentHudBtn
+        val hasTalent = ph.availableTalentTier() != null
+        drawBoxBtn(canvas, tb, if (hasTalent) "★ TALENT" else "TALENTS",
+            if (hasTalent) 0xEE065F46.toInt() else 0xCC162032.toInt(),
+            if (hasTalent) 0xFF34D399.toInt() else 0xFFD4A037.toInt())
+
+        // Scepter & Shard mini badges beside Talent button
+        val badgeLeft = tb.right + 4f
+        val badgeW = ((ab.right - badgeLeft - 4f) * 0.5f).coerceAtLeast(16f)
+        rectF.set(badgeLeft, tb.top, badgeLeft + badgeW, tb.bottom)
+        paint.style = Paint.Style.FILL
+        paint.color = if (ph.hasScepter) 0xFF1D4ED8.toInt() else 0xFF151E2E.toInt()
+        canvas.drawRoundRect(rectF, 5f, 5f, paint)
+        paint.style = Paint.Style.STROKE; paint.strokeWidth = 1.4f
+        paint.color = if (ph.hasScepter) 0xFF60A5FA.toInt() else 0xFF334155.toInt()
+        canvas.drawRoundRect(rectF, 5f, 5f, paint)
+        textPaint.color = if (ph.hasScepter) Color.WHITE else 0xFF64748B.toInt()
+        textPaint.textSize = (tb.height() * 0.38f).coerceIn(8f, 13f)
+        canvas.drawText("AGH", rectF.centerX(), rectF.centerY() + textPaint.textSize * 0.35f, textPaint)
+
+        rectF.set(badgeLeft + badgeW + 4f, tb.top, ab.right, tb.bottom)
+        paint.style = Paint.Style.FILL
+        paint.color = if (ph.hasShard) 0xFF0E7490.toInt() else 0xFF151E2E.toInt()
+        canvas.drawRoundRect(rectF, 5f, 5f, paint)
+        paint.style = Paint.Style.STROKE
+        paint.color = if (ph.hasShard) 0xFF38BDF8.toInt() else 0xFF334155.toInt()
+        canvas.drawRoundRect(rectF, 5f, 5f, paint)
+        textPaint.color = if (ph.hasShard) Color.WHITE else 0xFF64748B.toInt()
+        canvas.drawText("SHD", rectF.centerX(), rectF.centerY() + textPaint.textSize * 0.35f, textPaint)
+
+        // STR / AGI / INT Circles + Numbers
+        val attrY = tb.bottom + (ab.bottom - tb.bottom) * 0.32f
+        val colW = ab.width() / 3f
+        val attrs = arrayOf(
+            Triple("STR", ph.cachedStr.toInt(), PrimaryAttribute.STRENGTH),
+            Triple("AGI", ph.cachedAgi.toInt(), PrimaryAttribute.AGILITY),
+            Triple("INT", ph.cachedInt.toInt(), PrimaryAttribute.INTELLIGENCE)
+        )
+        val dotR = (ab.height() * 0.068f).coerceIn(4f, 7f)
+        val attrTxtSz = (ab.height() * 0.130f).coerceIn(9.5f, 15f)
+        for (k in 0..2) {
+            val colLeft = ab.left + colW * k
+            val dotCx = colLeft + dotR + 3f
+            val dotCy = attrY - dotR * 0.2f
+            val isPrim = ph.def.attribute == attrs[k].third
+            paint.style = Paint.Style.FILL
+            paint.color = attrs[k].third.colorHex
+            canvas.drawCircle(dotCx, dotCy, dotR, paint)
+            if (isPrim) {
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 1.5f
+                paint.color = Color.WHITE
+                canvas.drawCircle(dotCx, dotCy, dotR + 1.4f, paint)
+            }
+            textPaint.textAlign = Paint.Align.LEFT
+            textPaint.textSize = attrTxtSz
+            textPaint.color = if (isPrim) 0xFFFDE047.toInt() else Color.WHITE
+            canvas.drawText("${attrs[k].second}", dotCx + dotR + 4f, attrY + attrTxtSz * 0.25f, textPaint)
+        }
+
+        // Combat Stats: DMG, ARM, MS, AS
+        val statY1 = tb.bottom + (ab.bottom - tb.bottom) * 0.65f
+        val statY2 = tb.bottom + (ab.bottom - tb.bottom) * 0.94f
+        val statSz = (ab.height() * 0.118f).coerceIn(9f, 14f)
+        textPaint.textSize = statSz
+        textPaint.textAlign = Paint.Align.LEFT
+        textPaint.color = if (ph.hasStatus(StatusType.DOUBLE_DAMAGE) || ph.enchantTotemBuff) 0xFF38BDF8.toInt() else 0xFFE2E8F0.toInt()
+        canvas.drawText("DMG ${ph.cachedDamage.toInt()}", ab.left + 2f, statY1, textPaint)
+        textPaint.color = 0xFFCBD5E1.toInt()
+        canvas.drawText("ARM ${"%.1f".format(ph.armor)}", ab.left + ab.width() * 0.50f, statY1, textPaint)
+        canvas.drawText("MS ${ph.cachedMoveSpeed.toInt()}", ab.left + 2f, statY2, textPaint)
+        canvas.drawText("AS ${ph.cachedAttackSpeed.toInt()}", ab.left + ab.width() * 0.50f, statY2, textPaint)
+
+        // 4. Center Hero Name + HP/MP Bars
+        val p = geo.heroPlate
+        val rowH = (p.height() - 8f) / 3f
+        textPaint.textAlign = Paint.Align.LEFT
+        textPaint.textSize = (rowH * 0.56f).coerceIn(10f, 17f)
+        textPaint.color = 0xFFF5B041.toInt()
+        val extraTag = when {
+            ph.def.id == "pudge" && ph.fleshHeapStacks > 0 -> " • Heap +${ph.fleshHeapStacks}"
+            ph.def.id == "axe" && ph.coatOfBloodStacks > 0 -> " • Blood +${ph.coatOfBloodStacks}"
+            ph.desoStacks > 0 -> " • Deso +${ph.desoStacks}"
+            ph.def.id == "invoker" -> " • [Q][W][E]"
+            else -> ""
+        }
+        canvas.drawText("${ph.def.name.uppercase()}$extraTag", p.left + 2f, p.top + rowH * 0.72f, textPaint)
 
         // HP Bar
-        val hpY = p.top + rowH + 3f
+        val hpY = p.top + rowH + 2f
+        val barH = rowH * 0.88f
         val hpPct = (ph.hp / ph.maxHp.coerceAtLeast(1f)).coerceIn(0f, 1f)
         paint.style = Paint.Style.FILL
-        paint.color = 0xFF14291E.toInt()
-        canvas.drawRect(p.left + padX, hpY, p.left + padX + innerW, hpY + rowH * 0.85f, paint)
+        paint.color = 0xFF132A1C.toInt()
+        rectF.set(p.left, hpY, p.right, hpY + barH)
+        canvas.drawRoundRect(rectF, 5f, 5f, paint)
         paint.color = 0xFF22C55E.toInt()
-        canvas.drawRect(p.left + padX, hpY, p.left + padX + innerW * hpPct, hpY + rowH * 0.85f, paint)
+        rectF.set(p.left, hpY, p.left + p.width() * hpPct, hpY + barH)
+        canvas.drawRoundRect(rectF, 5f, 5f, paint)
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.color = Color.WHITE
-        textPaint.textSize = (rowH * 0.62f).coerceIn(10f, 18f)
-        canvas.drawText("${ph.hp.toInt()} / ${ph.maxHp.toInt()}  (+${"%.1f".format(ph.cachedHpRegen)})",
-            p.centerX(), hpY + rowH * 0.66f, textPaint)
+        textPaint.textSize = (barH * 0.58f).coerceIn(9.5f, 16f)
+        canvas.drawText("${ph.hp.toInt()} / ${ph.maxHp.toInt()}", p.centerX(), hpY + barH * 0.70f, textPaint)
+        textPaint.textAlign = Paint.Align.RIGHT
+        textPaint.textSize = (barH * 0.48f).coerceIn(8f, 13f)
+        textPaint.color = 0xFFBBF7D0.toInt()
+        canvas.drawText("+${"%.1f".format(ph.cachedHpRegen)}", p.right - 5f, hpY + barH * 0.68f, textPaint)
 
         // Mana Bar
         val mpY = hpY + rowH + 2f
         val mpPct = (ph.mana / ph.maxMana.coerceAtLeast(1f)).coerceIn(0f, 1f)
-        paint.color = 0xFF112238.toInt()
-        canvas.drawRect(p.left + padX, mpY, p.left + padX + innerW, mpY + rowH * 0.85f, paint)
-        paint.color = 0xFF38BDF8.toInt()
-        canvas.drawRect(p.left + padX, mpY, p.left + padX + innerW * mpPct, mpY + rowH * 0.85f, paint)
+        paint.color = 0xFF0E233A.toInt()
+        rectF.set(p.left, mpY, p.right, mpY + barH)
+        canvas.drawRoundRect(rectF, 5f, 5f, paint)
+        paint.color = 0xFF0EA5E9.toInt()
+        rectF.set(p.left, mpY, p.left + p.width() * mpPct, mpY + barH)
+        canvas.drawRoundRect(rectF, 5f, 5f, paint)
+        textPaint.textAlign = Paint.Align.CENTER
         textPaint.color = Color.WHITE
-        canvas.drawText("${ph.mana.toInt()} / ${ph.maxMana.toInt()}  (+${"%.1f".format(ph.cachedManaRegen)})",
-            p.centerX(), mpY + rowH * 0.66f, textPaint)
+        textPaint.textSize = (barH * 0.58f).coerceIn(9.5f, 16f)
+        canvas.drawText("${ph.mana.toInt()} / ${ph.maxMana.toInt()}", p.centerX(), mpY + barH * 0.70f, textPaint)
+        textPaint.textAlign = Paint.Align.RIGHT
+        textPaint.textSize = (barH * 0.48f).coerceIn(8f, 13f)
+        textPaint.color = 0xFFBAE6FD.toInt()
+        canvas.drawText("+${"%.1f".format(ph.cachedManaRegen)}", p.right - 5f, mpY + barH * 0.68f, textPaint)
+
+        // 5. Dota 2 3x2 Inventory Slots
+        for (i in 0..5) {
+            val b = geo.itemSlots[i]
+            rectF.set(b.left, b.top, b.right, b.bottom)
+            val slot = ph.inventory.getOrNull(i)
+            paint.style = Paint.Style.FILL
+            paint.color = 0xDD101624.toInt()
+            canvas.drawRoundRect(rectF, 6f, 6f, paint)
+
+            if (slot != null) {
+                val item = ItemCatalog.get(slot.itemId)
+                val icon = item?.let { DotaAssetLoader.getItemIcon(it.id) }
+                if (icon != null) {
+                    canvas.save()
+                    clipPath.reset()
+                    clipPath.addRoundRect(RectF(b.left + 2f, b.top + 2f, b.right - 2f, b.bottom - 2f), 5f, 5f, Path.Direction.CW)
+                    canvas.clipPath(clipPath)
+                    canvas.drawBitmap(icon, null, RectF(b.left + 2f, b.top + 2f, b.right - 2f, b.bottom - 2f), paint)
+                    canvas.restore()
+                }
+                if (slot.cooldownRemaining > 0f) {
+                    paint.color = 0xAA000000.toInt()
+                    canvas.drawRoundRect(rectF, 6f, 6f, paint)
+                    textPaint.color = Color.WHITE
+                    textPaint.textSize = 12f * uiScale
+                    textPaint.textAlign = Paint.Align.CENTER
+                    canvas.drawText("${slot.cooldownRemaining.toInt()}", b.centerX(), b.centerY() + 4f, textPaint)
+                } else if (slot.stacks > 1 || item?.id == "magic_wand") {
+                    textPaint.color = 0xFFFDE047.toInt()
+                    textPaint.textSize = 10f * uiScale
+                    textPaint.textAlign = Paint.Align.RIGHT
+                    val badge = if (item?.id == "magic_wand") "${slot.charges}" else "x${slot.stacks}"
+                    canvas.drawText(badge, b.right - 3f, b.bottom - 3f, textPaint)
+                } else if (item?.id == "power_treads") {
+                    val (tLbl, tCol) = when (slot.treadMode) {
+                        0 -> "STR" to 0xFFE74C3C.toInt()
+                        1 -> "AGI" to 0xFF2ECC71.toInt()
+                        else -> "INT" to 0xFF38BDF8.toInt()
+                    }
+                    textPaint.color = tCol
+                    textPaint.textSize = 8.5f * uiScale
+                    textPaint.textAlign = Paint.Align.LEFT
+                    canvas.drawText(tLbl, b.left + 3f, b.bottom - 3f, textPaint)
+                }
+            }
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.8f
+            paint.color = when {
+                renderer3D.aimingItemSlotIdx == i -> 0xFF38BDF8.toInt()
+                slot != null -> 0xFFD4A037.toInt()
+                else -> 0xFF334155.toInt()
+            }
+            canvas.drawRoundRect(rectF, 6f, 6f, paint)
+        }
+
+        // 6. TP Scroll Slot & Neutral Item Slot
+        val tpB = geo.tpSlot
+        val tpR = minOf(tpB.width(), tpB.height()) * 0.46f
+        val tpTxt = if (ph.tpCooldown > 0f) "${ph.tpCooldown.toInt()}" else "TP"
+        drawCircleBtn(canvas, Vec2(tpB.centerX(), tpB.centerY()), tpR, tpTxt,
+            0xCC1E3A8A.toInt(), 0xFF60A5FA.toInt(), DotaAssetLoader.getItemIcon("tp_scroll"))
+
+        val neuB = geo.neutralSlot
+        val neuR = minOf(neuB.width(), neuB.height()) * 0.46f
+        val nid = ph.neutralItemId
+        val neuDef = nid?.let { ItemCatalog.getNeutral(it) }
+        val neuIcon = nid?.let { DotaAssetLoader.getItemIcon(it) }
+        val neuTxt = if (neuDef != null) "T${neuDef.tier}" else "NEU"
+        drawCircleBtn(canvas, Vec2(neuB.centerX(), neuB.centerY()), neuR, if (neuIcon != null) "" else neuTxt,
+            0xCC181828.toInt(), if (neuDef != null) 0xFFC084FC.toInt() else 0xFF475569.toInt(), neuIcon)
+        if (neuDef != null) {
+            textPaint.textAlign = Paint.Align.CENTER
+            textPaint.textSize = (neuR * 0.42f).coerceIn(8f, 13f)
+            textPaint.color = 0xFFE9D5FF.toInt()
+            canvas.drawText("T${neuDef.tier}", neuB.centerX(), neuB.bottom - 2f, textPaint)
+        }
         textPaint.typeface = Typeface.DEFAULT
     }
 
     private fun drawAttackCluster(canvas: Canvas) {
-        drawCircleBtn(canvas, geo.attackCenter, geo.attackRadius, "ATK", 0xDDB91C1C.toInt(), 0xFFF87171.toInt(), null)
-        drawCircleBtn(canvas, geo.minionCenter, geo.subRadius, "CREEP", 0xDD92400E.toInt(), 0xFFFBBF24.toInt(), null)
-        drawCircleBtn(canvas, geo.towerDenyCenter, geo.subRadius, "TWR/!", 0xDD0369A1.toInt(), 0xFF38BDF8.toInt(), null)
+        val atkBg = if (heldAttackMode == 0) 0xFFDC2626.toInt() else 0xDDB91C1C.toInt()
+        val crpBg = if (heldAttackMode == 1) 0xFFD97706.toInt() else 0xDD92400E.toInt()
+        val twrBg = if (heldAttackMode == 2) 0xFF0284C7.toInt() else 0xDD0369A1.toInt()
+        drawCircleBtn(canvas, geo.attackCenter, geo.attackRadius, "ATK", atkBg, 0xFFF87171.toInt(), null)
+        drawCircleBtn(canvas, geo.minionCenter, geo.subRadius, "CREEP", crpBg, 0xFFFBBF24.toInt(), null)
+        drawCircleBtn(canvas, geo.towerDenyCenter, geo.subRadius, "TWR/!", twrBg, 0xFF38BDF8.toInt(), null)
     }
 
     private fun drawAbilityArc(canvas: Canvas, uiScale: Float) {
@@ -436,19 +748,25 @@ class MlbbHudOverlayView(
             val c = geo.abilityCenters[i]
             val lvl = ph.abilityLevels[i]
             val cd = ph.abilityCooldowns[i]
+            val manaCost = ab.manaCost.getOrElse((lvl - 1).coerceAtLeast(0)) { 0 }
+            val lowMana = lvl > 0 && ph.mana < manaCost
+            val isPassive = ab.targetType == TargetType.PASSIVE
+            val isRotOn = ab.targetType == TargetType.TOGGLE && ph.def.id == "pudge" && ph.rotEnabled
             val icon = DotaAssetLoader.getAbilityCircleIcon(ab.id, 128)
             val border = when {
                 renderer3D.aimingAbilityIdx == i -> 0xFF38BDF8.toInt()
+                isRotOn -> 0xFF4ADE80.toInt()
                 ab.isUltimate -> 0xFFF59E0B.toInt()
+                isPassive && lvl > 0 -> 0xFF94A3B8.toInt()
                 lvl > 0 -> 0xFF60A5FA.toInt()
                 else -> 0xFF475569.toInt()
             }
 
             if (icon != null) {
                 canvas.drawBitmap(icon, null, RectF(c.x - r, c.y - r, c.x + r, c.y + r), paint)
-                if (lvl == 0 || cd > 0f || ph.mana < ab.manaCost.getOrElse((lvl - 1).coerceAtLeast(0)) { 0 }) {
+                if (lvl == 0 || cd > 0f || lowMana) {
                     paint.style = Paint.Style.FILL
-                    paint.color = 0xAA090D16.toInt()
+                    paint.color = if (lowMana && cd <= 0f) 0xAA0C2D57.toInt() else 0xAA090D16.toInt()
                     canvas.drawCircle(c.x, c.y, r, paint)
                 }
             } else {
@@ -458,7 +776,7 @@ class MlbbHudOverlayView(
             }
 
             paint.style = Paint.Style.STROKE
-            paint.strokeWidth = (if (ab.isUltimate) 4f else 3f) * uiScale * 0.65f
+            paint.strokeWidth = (if (ab.isUltimate || isRotOn) 4f else 2.8f) * uiScale * 0.65f
             paint.color = border
             canvas.drawCircle(c.x, c.y, r, paint)
 
@@ -466,23 +784,33 @@ class MlbbHudOverlayView(
             textPaint.typeface = Typeface.DEFAULT_BOLD
             if (lvl == 0) {
                 textPaint.color = 0xFFCBD5E1.toInt()
-                textPaint.textSize = r * 0.42f
+                textPaint.textSize = r * 0.40f
                 canvas.drawText(ab.keyLabel, c.x, c.y + r * 0.14f, textPaint)
             } else if (cd > 0f) {
                 textPaint.color = Color.WHITE
-                textPaint.textSize = r * 0.48f
+                textPaint.textSize = r * 0.46f
                 canvas.drawText("${"%.1f".format(cd)}", c.x, c.y + r * 0.16f, textPaint)
+            } else if (isPassive) {
+                textPaint.color = 0xFFE2E8F0.toInt()
+                textPaint.textSize = r * 0.25f
+                canvas.drawText("PSV", c.x, c.y + r * 0.10f, textPaint)
             } else if (ab.maxCharges > 1) {
                 textPaint.color = 0xFFFDE047.toInt()
                 textPaint.textSize = r * 0.34f
-                canvas.drawText("${ph.abilityCharges[i]}", c.x + r * 0.55f, c.y - r * 0.4f, textPaint)
+                canvas.drawText("${ph.abilityCharges[i]}", c.x + r * 0.55f, c.y - r * 0.38f, textPaint)
+            }
+
+            if (manaCost > 0 && lvl > 0 && !isPassive) {
+                textPaint.color = if (lowMana) 0xFFF87171.toInt() else 0xFF7DD3FC.toInt()
+                textPaint.textSize = (r * 0.27f).coerceIn(8f, 14f)
+                canvas.drawText("$manaCost", c.x, c.y - r * 0.55f, textPaint)
             }
 
             for (d in 0 until ab.maxLevel) {
                 paint.style = Paint.Style.FILL
                 paint.color = if (d < lvl) 0xFFFACC15.toInt() else 0xFF334155.toInt()
                 val dx = (d - (ab.maxLevel - 1) * 0.5f) * (r * 0.24f)
-                canvas.drawCircle(c.x + dx, c.y + r - 6f, (r * 0.08f).coerceAtLeast(3f), paint)
+                canvas.drawCircle(c.x + dx, c.y + r - 5f, (r * 0.08f).coerceAtLeast(2.8f), paint)
             }
 
             if (ph.canLevelAbility(i)) {
@@ -494,6 +822,9 @@ class MlbbHudOverlayView(
                 paint.strokeWidth = 2.5f
                 paint.color = 0xAA38BDF8.toInt()
                 canvas.drawCircle(c.x, c.y, r * 1.45f, paint)
+                linePaint.color = 0xAA38BDF8.toInt()
+                linePaint.strokeWidth = 3f
+                canvas.drawLine(c.x, c.y, aimCurrentPos.x, aimCurrentPos.y, linePaint)
                 paint.style = Paint.Style.FILL
                 paint.color = 0xCC38BDF8.toInt()
                 canvas.drawCircle(aimCurrentPos.x, aimCurrentPos.y, r * 0.42f, paint)
@@ -504,50 +835,15 @@ class MlbbHudOverlayView(
 
     private fun drawUtilityButtons(canvas: Canvas) {
         val ph = world.playerHero
-        val tpTxt = if (ph.tpCooldown > 0f) "${ph.tpCooldown.toInt()}" else "TP"
-        drawCircleBtn(canvas, geo.tpCenter, geo.utilRadius, tpTxt, 0xCC1E3A8A.toInt(), 0xFF60A5FA.toInt(), DotaAssetLoader.getItemIcon("tp_scroll"))
         val stashN = ph.stash.size
-        drawCircleBtn(canvas, geo.courierCenter, geo.utilRadius, if (stashN > 0) "C($stashN)" else "COUR", 0xCC713F12.toInt(), 0xFFFBBF24.toInt(), null)
+        val courActive = world.couriers.any { it.heroId == ph.id && (it.delivering || it.returning) }
+        drawCircleBtn(canvas, geo.courierCenter, geo.utilRadius,
+            if (stashN > 0) "C($stashN)" else if (courActive) "FLY" else "COUR",
+            if (stashN > 0) 0xEEB45309.toInt() else 0xCC713F12.toInt(),
+            if (stashN > 0) 0xFFFDE047.toInt() else 0xFFFBBF24.toInt(), null)
         val gCd = if (ph.team == Team.RADIANT) world.radiantGlyphCd else world.direGlyphCd
-        drawCircleBtn(canvas, geo.glyphCenter, geo.utilRadius, if (gCd > 0f) "${gCd.toInt()}" else "GLYPH", 0xCC0C4A6E.toInt(), 0xFF38BDF8.toInt(), null)
-    }
-
-    private fun drawInventoryBar(canvas: Canvas, uiScale: Float) {
-        val ph = world.playerHero
-        for (i in 0..5) {
-            val b = geo.itemSlots[i]
-            rectF.set(b.left, b.top, b.right, b.bottom)
-            val slot = ph.inventory.getOrNull(i)
-            paint.style = Paint.Style.FILL
-            paint.color = 0xCC0E131D.toInt()
-            canvas.drawRoundRect(rectF, 8f, 8f, paint)
-
-            if (slot != null) {
-                val item = ItemCatalog.get(slot.itemId)
-                val icon = item?.let { DotaAssetLoader.getItemIcon(it.id) }
-                if (icon != null) {
-                    canvas.drawBitmap(icon, null, RectF(b.left + 3f, b.top + 3f, b.right - 3f, b.bottom - 3f), paint)
-                }
-                if (slot.cooldownRemaining > 0f) {
-                    paint.color = 0xAA000000.toInt()
-                    canvas.drawRoundRect(rectF, 8f, 8f, paint)
-                    textPaint.color = Color.WHITE
-                    textPaint.textSize = 13f * uiScale
-                    textPaint.textAlign = Paint.Align.CENTER
-                    canvas.drawText("${slot.cooldownRemaining.toInt()}", b.centerX(), b.centerY() + 5f, textPaint)
-                } else if (slot.stacks > 1 || item?.id == "magic_wand") {
-                    textPaint.color = 0xFFFDE047.toInt()
-                    textPaint.textSize = 11f * uiScale
-                    textPaint.textAlign = Paint.Align.RIGHT
-                    val badge = if (item?.id == "magic_wand") "${slot.charges}" else "x${slot.stacks}"
-                    canvas.drawText(badge, b.right - 4f, b.bottom - 4f, textPaint)
-                }
-            }
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 2f
-            paint.color = if (slot != null) 0xFFF59E0B.toInt() else 0xFF334155.toInt()
-            canvas.drawRoundRect(rectF, 8f, 8f, paint)
-        }
+        drawCircleBtn(canvas, geo.glyphCenter, geo.utilRadius, if (gCd > 0f) "${gCd.toInt()}" else "GLYPH",
+            0xCC0C4A6E.toInt(), 0xFF38BDF8.toInt(), null)
     }
 
     private fun drawDeadAndAnnouncements(canvas: Canvas, w: Float, h: Float) {
@@ -590,10 +886,15 @@ class MlbbHudOverlayView(
         paint.color = bg
         canvas.drawCircle(c.x, c.y, r, paint)
         if (icon != null) {
-            canvas.drawBitmap(icon, null, RectF(c.x - r * 0.72f, c.y - r * 0.72f, c.x + r * 0.72f, c.y + r * 0.72f), paint)
+            canvas.save()
+            clipPath.reset()
+            clipPath.addCircle(c.x, c.y, r * 0.90f, Path.Direction.CW)
+            canvas.clipPath(clipPath)
+            canvas.drawBitmap(icon, null, RectF(c.x - r * 0.92f, c.y - r * 0.92f, c.x + r * 0.92f, c.y + r * 0.92f), paint)
+            canvas.restore()
         }
         paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 3f
+        paint.strokeWidth = 2.8f
         paint.color = border
         canvas.drawCircle(c.x, c.y, r, paint)
 
@@ -601,7 +902,7 @@ class MlbbHudOverlayView(
             textPaint.color = Color.WHITE
             textPaint.textAlign = Paint.Align.CENTER
             textPaint.typeface = Typeface.DEFAULT_BOLD
-            textPaint.textSize = (r * 0.34f).coerceIn(11f, 24f)
+            textPaint.textSize = (r * 0.34f).coerceIn(10f, 22f)
             textPaint.setShadowLayer(3f, 0f, 1f, Color.BLACK)
             canvas.drawText(label, c.x, c.y + textPaint.textSize * 0.36f, textPaint)
             textPaint.clearShadowLayer()
@@ -613,20 +914,23 @@ class MlbbHudOverlayView(
         rectF.set(b.left, b.top, b.right, b.bottom)
         paint.style = Paint.Style.FILL
         paint.color = bg
-        canvas.drawRoundRect(rectF, 10f, 10f, paint)
+        canvas.drawRoundRect(rectF, 8f, 8f, paint)
         paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 2f
+        paint.strokeWidth = 1.8f
         paint.color = border
-        canvas.drawRoundRect(rectF, 10f, 10f, paint)
+        canvas.drawRoundRect(rectF, 8f, 8f, paint)
         textPaint.color = Color.WHITE
         textPaint.textAlign = Paint.Align.CENTER
         textPaint.typeface = Typeface.DEFAULT_BOLD
-        textPaint.textSize = (b.height() * 0.36f).coerceIn(11f, 20f)
+        textPaint.textSize = (b.height() * 0.38f).coerceIn(9.5f, 18f)
         canvas.drawText(label, b.centerX(), b.centerY() + textPaint.textSize * 0.35f, textPaint)
         textPaint.typeface = Typeface.DEFAULT
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.pointerCount >= 2 && joystickPointerId == -1 && aimPointerId == -1 && minimapPointerId == -1) {
+            scaleDetector.onTouchEvent(event)
+        }
         val action = event.actionMasked
         val idx = event.actionIndex
         val pid = event.getPointerId(idx)
@@ -646,10 +950,23 @@ class MlbbHudOverlayView(
                     if (renderer3D.cameraLocked) renderer3D.cameraPos.set(world.playerHero.pos.x, world.playerHero.pos.y)
                     return true
                 }
+                if (geo.zoomBtn.contains(sx, sy)) {
+                    renderer3D.cameraZoomDist = when {
+                        renderer3D.cameraZoomDist < 640f -> 690f
+                        renderer3D.cameraZoomDist < 780f -> 850f
+                        else -> 580f
+                    }
+                    return true
+                }
                 if (geo.shopBtn.contains(sx, sy)) { listener.onOpenShop(); return true }
-                if (geo.talentBtn.contains(sx, sy)) { listener.onOpenTalents(); return true }
+                if (geo.talentBtn.contains(sx, sy) || geo.talentHudBtn.contains(sx, sy)) { listener.onOpenTalents(); return true }
                 if (geo.statsBtn.contains(sx, sy)) { listener.onOpenScoreboard(); return true }
                 if (geo.pauseBtn.contains(sx, sy)) { listener.onOpenPauseMenu(); return true }
+                if (geo.portraitBox.contains(sx, sy)) {
+                    renderer3D.cameraLocked = true
+                    renderer3D.cameraPos.set(world.playerHero.pos.x, world.playerHero.pos.y)
+                    return true
+                }
 
                 for (qi in 0..1) {
                     if (geo.quickBuy[qi].contains(sx, sy)) {
@@ -664,14 +981,26 @@ class MlbbHudOverlayView(
                     return true
                 }
                 if (hypot(sx - geo.attackCenter.x, sy - geo.attackCenter.y) <= geo.attackRadius + 10f) {
+                    attackPointerId = pid
+                    heldAttackMode = 0
+                    lastAttackRepeatMs = SystemClock.uptimeMillis()
+                    renderer3D.showAttackRangeRing = true
                     world.playerSmartAttack(preferCreep = false, preferDeny = false)
                     return true
                 }
                 if (hypot(sx - geo.minionCenter.x, sy - geo.minionCenter.y) <= geo.subRadius + 10f) {
+                    attackPointerId = pid
+                    heldAttackMode = 1
+                    lastAttackRepeatMs = SystemClock.uptimeMillis()
+                    renderer3D.showAttackRangeRing = true
                     world.playerSmartAttack(preferCreep = true, preferDeny = false)
                     return true
                 }
                 if (hypot(sx - geo.towerDenyCenter.x, sy - geo.towerDenyCenter.y) <= geo.subRadius + 10f) {
+                    attackPointerId = pid
+                    heldAttackMode = 2
+                    lastAttackRepeatMs = SystemClock.uptimeMillis()
+                    renderer3D.showAttackRangeRing = true
                     world.playerSmartAttack(preferCreep = false, preferDeny = true, preferStructure = true)
                     return true
                 }
@@ -685,21 +1014,27 @@ class MlbbHudOverlayView(
                     val c = geo.abilityCenters[i]
                     if (hypot(sx - c.x, sy - c.y) <= geo.abilityRadius + 10f) {
                         val ab = world.playerHero.def.abilities[i]
-                        if (ab.targetType == TargetType.INSTANT || ab.targetType == TargetType.TOGGLE || ab.targetType == TargetType.PASSIVE) {
+                        if (ab.targetType == TargetType.PASSIVE) {
+                            world.addFloatingText(world.playerHero.pos, "${ab.name} (Passive)", 0xFF94A3B8.toInt(), 0.7f)
+                            return true
+                        }
+                        if (ab.targetType == TargetType.INSTANT || ab.targetType == TargetType.TOGGLE) {
                             world.castAbility(world.playerHero, i, defaultAutoAim(ab.castRange))
                         } else {
                             aimPointerId = pid
                             aimStartPos.set(c.x, c.y)
                             aimCurrentPos.set(c.x, c.y)
+                            aimManualMoved = false
                             aimingCancelHovered = false
                             renderer3D.aimingAbilityIdx = i
+                            renderer3D.aimingItemSlotIdx = -1
                             val auto = defaultAutoAim(ab.castRange)
                             renderer3D.aimWorldPos.set(auto.x, auto.y)
                         }
                         return true
                     }
                 }
-                if (hypot(sx - geo.tpCenter.x, sy - geo.tpCenter.y) <= geo.utilRadius + 8f) {
+                if (geo.tpSlot.contains(sx, sy)) {
                     world.useTpScroll(world.playerHero, renderer3D.cameraPos)
                     return true
                 }
@@ -713,10 +1048,25 @@ class MlbbHudOverlayView(
                 }
                 for (i in 0..5) {
                     if (geo.itemSlots[i].contains(sx, sy)) {
-                        val aim = world.playerHero.pos + Vec2.fromAngle(world.playerHero.facingAngle, 450f)
-                        world.useItemSlot(world.playerHero, i, aim)
+                        val slot = world.playerHero.inventory.getOrNull(i) ?: return true
+                        if (isAimableItem(slot.itemId)) {
+                            aimPointerId = pid
+                            aimStartPos.set(geo.itemSlots[i].centerX(), geo.itemSlots[i].centerY())
+                            aimCurrentPos.set(sx, sy)
+                            aimManualMoved = false
+                            aimingCancelHovered = false
+                            renderer3D.aimingItemSlotIdx = i
+                            renderer3D.aimingAbilityIdx = -1
+                            val smart = smartItemTarget(slot.itemId)
+                            renderer3D.aimWorldPos.set(smart.x, smart.y)
+                        } else {
+                            world.useItemSlot(world.playerHero, i, world.playerHero.pos)
+                        }
                         return true
                     }
+                }
+                if (geo.heroConsole.contains(sx, sy)) {
+                    return true
                 }
                 if (sx < w * 0.44f && joystickPointerId == -1) {
                     joystickPointerId = pid
@@ -729,6 +1079,7 @@ class MlbbHudOverlayView(
                 val tappedEnemy = world.allEnemyUnits(world.playerTeam, worldPt, 95f).minByOrNull { it.pos.distTo(worldPt) }
                 if (tappedEnemy != null) {
                     world.playerHero.attackTargetId = tappedEnemy.id
+                    world.playerHero.attackCommandAge = 0f
                     world.playerHero.facingAngle = world.playerHero.pos.angleTo(tappedEnemy.pos)
                     world.spawnParticles(tappedEnemy.pos, 0xFFEF4444.toInt(), 6, 40f)
                 } else if (panPointerId == -1) {
@@ -749,7 +1100,7 @@ class MlbbHudOverlayView(
                         val dy = my - joystickBase.y
                         val dist = hypot(dx, dy)
                         val maxR = geo.joystickRadius
-                        if (dist > 8f) {
+                        if (dist > 11f) {
                             val clamped = dist.coerceAtMost(maxR)
                             joystickKnob.set(joystickBase.x + (dx / dist) * clamped, joystickBase.y + (dy / dist) * clamped)
                             world.playerHero.moveIntent.set(dx / dist, dy / dist)
@@ -758,38 +1109,61 @@ class MlbbHudOverlayView(
                             world.playerHero.moveIntent.set(0f, 0f)
                         }
                     } else if (p == aimPointerId && renderer3D.aimingAbilityIdx in 0..3) {
-                        aimingCancelHovered = hypot(mx - geo.cancelCenter.x, my - geo.cancelCenter.y) <= geo.cancelRadius + 26f
+                        aimingCancelHovered = hypot(mx - geo.cancelCenter.x, my - geo.cancelCenter.y) <= geo.cancelRadius + 28f
                         val dx = mx - aimStartPos.x
                         val dy = my - aimStartPos.y
                         val dist = hypot(dx, dy)
                         val maxR = geo.abilityRadius * 1.45f
-                        if (dist > 14f) {
+                        val deadzone = geo.abilityRadius * 0.52f
+                        if (dist > deadzone) {
+                            aimManualMoved = true
                             val clamped = dist.coerceAtMost(maxR)
                             aimCurrentPos.set(aimStartPos.x + (dx / dist) * clamped, aimStartPos.y + (dy / dist) * clamped)
                             val ab = world.playerHero.def.abilities[renderer3D.aimingAbilityIdx]
                             val range = ab.castRange.takeIf { it > 0f } ?: 650f
-                            val factor = (dist / 120f).coerceIn(0.20f, 1.0f)
+                            val factor = if (ab.targetType == TargetType.DIRECTION_SKILLSHOT) 1.0f else (dist / 120f).coerceIn(0.20f, 1.0f)
                             renderer3D.aimWorldPos.set(
                                 world.playerHero.pos.x + (dx / dist) * range * factor,
                                 world.playerHero.pos.y + (dy / dist) * range * factor
                             )
+                        } else if (!aimManualMoved) {
+                            aimCurrentPos.set(mx, my)
                         }
-                    } else if (p == panPointerId) {
+                    } else if (p == aimPointerId && renderer3D.aimingItemSlotIdx >= 0) {
+                        aimingCancelHovered = hypot(mx - geo.cancelCenter.x, my - geo.cancelCenter.y) <= geo.cancelRadius + 28f
+                        val dx = mx - aimStartPos.x
+                        val dy = my - aimStartPos.y
+                        val dist = hypot(dx, dy)
+                        if (dist > 22f) {
+                            aimManualMoved = true
+                            aimCurrentPos.set(mx, my)
+                            val factor = (dist / 130f).coerceIn(0.25f, 1.0f)
+                            renderer3D.aimWorldPos.set(
+                                world.playerHero.pos.x + (dx / dist) * 850f * factor,
+                                world.playerHero.pos.y + (dy / dist) * 850f * factor
+                            )
+                        }
+                    } else if (p == panPointerId && event.pointerCount == 1) {
                         val dx = mx - panLastPos.x
                         val dy = my - panLastPos.y
                         if (hypot(dx, dy) > 4f) {
                             renderer3D.cameraLocked = false
-                            renderer3D.cameraPos.x = (renderer3D.cameraPos.x - dx * 1.6f).coerceIn(0f, MapLayout.SIZE)
-                            renderer3D.cameraPos.y = (renderer3D.cameraPos.y - dy * 1.6f).coerceIn(0f, MapLayout.SIZE)
+                            renderer3D.cameraPos.x = (renderer3D.cameraPos.x - dx * 1.5f).coerceIn(0f, MapLayout.SIZE)
+                            renderer3D.cameraPos.y = (renderer3D.cameraPos.y - dy * 1.5f).coerceIn(0f, MapLayout.SIZE)
                             panLastPos.set(mx, my)
                         }
                     }
                 }
             }
 
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> {
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 if (pid == minimapPointerId) minimapPointerId = -1
                 if (pid == panPointerId) panPointerId = -1
+                if (pid == attackPointerId) {
+                    attackPointerId = -1
+                    heldAttackMode = -1
+                    renderer3D.showAttackRangeRing = false
+                }
                 if (pid == joystickPointerId) {
                     joystickPointerId = -1
                     joystickActive = false
@@ -797,16 +1171,50 @@ class MlbbHudOverlayView(
                 }
                 if (pid == aimPointerId) {
                     val idxAb = renderer3D.aimingAbilityIdx
+                    val idxItem = renderer3D.aimingItemSlotIdx
                     if (idxAb in 0..3 && !aimingCancelHovered) {
                         world.castAbility(world.playerHero, idxAb, renderer3D.aimWorldPos)
+                    } else if (idxItem >= 0 && !aimingCancelHovered) {
+                        world.useItemSlot(world.playerHero, idxItem, renderer3D.aimWorldPos)
                     }
                     aimPointerId = -1
+                    aimManualMoved = false
                     aimingCancelHovered = false
                     renderer3D.aimingAbilityIdx = -1
+                    renderer3D.aimingItemSlotIdx = -1
                 }
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                minimapPointerId = -1
+                panPointerId = -1
+                attackPointerId = -1
+                heldAttackMode = -1
+                renderer3D.showAttackRangeRing = false
+                joystickPointerId = -1
+                joystickActive = false
+                world.playerHero.moveIntent.set(0f, 0f)
+                aimPointerId = -1
+                aimManualMoved = false
+                aimingCancelHovered = false
+                renderer3D.aimingAbilityIdx = -1
+                renderer3D.aimingItemSlotIdx = -1
             }
         }
         return true
+    }
+
+    private fun isAimableItem(itemId: String): Boolean = itemId in setOf(
+        "blink_dagger", "obs_ward", "sentry_ward", "euls_scepter", "orchid", "scythe_of_vyse", "boots_of_travel"
+    )
+
+    private fun smartItemTarget(itemId: String): Vec2 {
+        val ph = world.playerHero
+        return when (itemId) {
+            "orchid", "scythe_of_vyse", "euls_scepter" -> defaultAutoAim(680f)
+            "boots_of_travel" -> renderer3D.cameraPos.copyVec()
+            else -> ph.pos + Vec2.fromAngle(ph.facingAngle, 650f)
+        }
     }
 
     private fun panFromMinimap(sx: Float, sy: Float) {

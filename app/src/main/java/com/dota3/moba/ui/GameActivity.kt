@@ -62,6 +62,7 @@ class GameActivity : AppCompatActivity(), GameHudListener {
     }
 
     override fun onOpenShop() {
+        world.playerHero.moveIntent.set(0f, 0f)
         activeDialog?.dismiss()
         val ph = world.playerHero
         var selectedCat = ItemCategory.CORE
@@ -216,6 +217,7 @@ class GameActivity : AppCompatActivity(), GameHudListener {
     }
 
     override fun onOpenTalents() {
+        world.playerHero.moveIntent.set(0f, 0f)
         activeDialog?.dismiss()
         val ph = world.playerHero
         val root = LinearLayout(this).apply {

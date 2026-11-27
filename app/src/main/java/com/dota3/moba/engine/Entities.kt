@@ -43,6 +43,9 @@ abstract class CombatUnit(
     var armorCorruptionTimer: Float = 0f
     var recentDamageTaken: Float = 0f
     var recentDamageTimer: Float = 0f
+    var attackAnimTimer: Float = 0f
+    var attackAnimDuration: Float = 0.30f
+    var walkCycle: Float = 0f
     val statuses: MutableList<ActiveStatus> = mutableListOf()
 
     fun addStatus(type: StatusType, duration: Float, magnitude: Float = 0f, sourceTeam: Team = Team.NEUTRAL, sourceId: String = "") {
@@ -139,14 +142,13 @@ class HeroEntity(
     var dismemberTimer: Float = 0f
     var dismemberTargetId: String? = null
     var dismemberAccum: Float = 0f
-    var attackAnimTimer: Float = 0f
-    var attackAnimDuration: Float = 0.30f
-    var walkCycle: Float = 0f
+    var castAnimTimer: Float = 0f
 
     // Input / AI targetting
     var moveIntent = Vec2(0f, 0f)
     var tapMoveTarget: Vec2? = null
     var attackTargetId: String? = null
+    var attackCommandAge: Float = 99f
     var quickBuyItemId: String? = null
     var botStateTimer: Float = 0f
     var botItemPlanIndex: Int = 0
