@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="dota_bg">#0B0D12</color>
+    <color name="dota_panel">#151923</color>
+    <color name="dota_crimson">#C62828</color>
+    <color name="dota_gold">#F5B041</color>
+    <color name="dota_radiant">#2ECC71</color>
+    <color name="dota_dire">#E74C3C</color>
+</resources>

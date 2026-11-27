@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Dota3" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowBackground">@color/dota_bg</item>
+        <item name="colorPrimary">@color/dota_crimson</item>
+        <item name="colorSecondary">@color/dota_gold</item>
+        <item name="android:statusBarColor">@color/dota_bg</item>
+        <item name="android:navigationBarColor">@color/dota_bg</item>
+    </style>
+</resources>

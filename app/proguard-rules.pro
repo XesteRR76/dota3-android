@@ -1,0 +1,1 @@
+-keep class com.dota3.moba.** { *; }
