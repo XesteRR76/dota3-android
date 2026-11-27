@@ -21,6 +21,8 @@ class EncyclopediaActivity : AppCompatActivity() {
 
     private lateinit var contentContainer: LinearLayout
 
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DotaAssetLoader.init(this)
@@ -29,7 +31,7 @@ class EncyclopediaActivity : AppCompatActivity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(DotaRebornStyle.BG_OBSIDIAN)
-            setPadding(36, 22, 36, 22)
+            setPadding(dp(18), dp(12), dp(18), dp(12))
         }
 
         val topBar = LinearLayout(this).apply {
@@ -82,7 +84,7 @@ class EncyclopediaActivity : AppCompatActivity() {
                 top.addView(ImageView(this).apply {
                     setImageBitmap(bmp)
                     scaleType = ImageView.ScaleType.CENTER_CROP
-                    layoutParams = LinearLayout.LayoutParams(150, 86).apply { rightMargin = 14 }
+                    layoutParams = LinearLayout.LayoutParams(dp(88), dp(50)).apply { rightMargin = dp(8) }
                 })
             }
             val headCol = LinearLayout(this).apply {
@@ -115,7 +117,7 @@ class EncyclopediaActivity : AppCompatActivity() {
                     abRow.addView(ImageView(this).apply {
                         setImageBitmap(bmp)
                         scaleType = ImageView.ScaleType.CENTER_CROP
-                        layoutParams = LinearLayout.LayoutParams(40, 40).apply { rightMargin = 10 }
+                        layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply { rightMargin = dp(6) }
                     })
                 }
                 val extra = buildString {
@@ -150,7 +152,7 @@ class EncyclopediaActivity : AppCompatActivity() {
                 card.addView(ImageView(this).apply {
                     setImageBitmap(bmp)
                     scaleType = ImageView.ScaleType.CENTER_CROP
-                    layoutParams = LinearLayout.LayoutParams(62, 46).apply { rightMargin = 12 }
+                    layoutParams = LinearLayout.LayoutParams(dp(38), dp(28)).apply { rightMargin = dp(8) }
                 })
             }
             val col = LinearLayout(this).apply {
@@ -192,7 +194,7 @@ class EncyclopediaActivity : AppCompatActivity() {
                 card.addView(ImageView(this).apply {
                     setImageBitmap(bmp)
                     scaleType = ImageView.ScaleType.CENTER_CROP
-                    layoutParams = LinearLayout.LayoutParams(58, 44).apply { rightMargin = 12 }
+                    layoutParams = LinearLayout.LayoutParams(dp(36), dp(27)).apply { rightMargin = dp(8) }
                 })
             }
             val col = LinearLayout(this).apply {

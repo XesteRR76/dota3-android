@@ -2,12 +2,13 @@ package com.dota3.moba.ui
 
 import android.graphics.Color
 import android.graphics.Typeface
+import android.opengl.GLSurfaceView
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -24,7 +25,6 @@ import com.dota3.moba.core.SoundEngine
 import com.dota3.moba.data.ItemCatalog
 import com.dota3.moba.engine.GameWorld
 import com.dota3.moba.model.*
-import com.dota3.moba.render.HudCustomization
 import com.dota3.moba.render.World3DRenderer
 import kotlin.math.roundToInt
 
@@ -34,6 +34,9 @@ class GameActivity : AndroidApplication(), GameHudListener {
     private lateinit var renderer3D: World3DRenderer
     private lateinit var hudOverlay: MlbbHudOverlayView
     private lateinit var overlayContainer: FrameLayout
+    private var pausedOnBackground = false
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).roundToInt().coerceAtLeast(1)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,6 +68,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
             numSamples = 0
         }
         val gdxView = initializeForView(renderer3D, config)
+        (gdxView as? GLSurfaceView)?.preserveEGLContextOnPause = true
 
         hudOverlay = MlbbHudOverlayView(this, world, renderer3D, this)
         overlayContainer = FrameLayout(this).apply {
@@ -79,6 +83,28 @@ class GameActivity : AndroidApplication(), GameHudListener {
             addView(overlayContainer, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
         setContentView(rootFrame)
+    }
+
+    override fun onPause() {
+        if (!isFinishing && !world.matchOver) {
+            synchronized(world) {
+                world.paused = true
+                world.playerHero.moveIntent.set(0f, 0f)
+            }
+            pausedOnBackground = true
+        }
+        super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        hideSystemBars()
+        if (pausedOnBackground) {
+            pausedOnBackground = false
+            if (!world.matchOver && overlayContainer.visibility != View.VISIBLE) {
+                onOpenPauseMenu()
+            }
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -97,7 +123,14 @@ class GameActivity : AndroidApplication(), GameHudListener {
         }
     }
 
-    private fun showOverlay(panel: View, scrimColor: Int = 0xAA05080E.toInt(), dismissOnScrim: Boolean = true, centered: Boolean = true) {
+    private fun showOverlay(
+        panel: View,
+        scrimColor: Int = 0xAA05080E.toInt(),
+        dismissOnScrim: Boolean = true,
+        centered: Boolean = true,
+        customWidth: Int? = null,
+        customHeight: Int? = null
+    ) {
         overlayContainer.removeAllViews()
         overlayContainer.setBackgroundColor(scrimColor)
         overlayContainer.setOnClickListener {
@@ -105,11 +138,11 @@ class GameActivity : AndroidApplication(), GameHudListener {
         }
         panel.isClickable = true
         val lp = FrameLayout.LayoutParams(
-            if (centered) (resources.displayMetrics.widthPixels * 0.88f).toInt().coerceAtMost(1420) else ViewGroup.LayoutParams.WRAP_CONTENT,
-            if (centered) (resources.displayMetrics.heightPixels * 0.86f).toInt().coerceAtMost(820) else ViewGroup.LayoutParams.WRAP_CONTENT,
+            customWidth ?: if (centered) (resources.displayMetrics.widthPixels * 0.90f).toInt().coerceAtMost(dp(820)) else ViewGroup.LayoutParams.WRAP_CONTENT,
+            customHeight ?: if (centered) (resources.displayMetrics.heightPixels * 0.88f).toInt().coerceAtMost(dp(500)) else ViewGroup.LayoutParams.WRAP_CONTENT,
             if (centered) Gravity.CENTER else Gravity.TOP or Gravity.CENTER_HORIZONTAL
         ).apply {
-            if (!centered) topMargin = 14
+            if (!centered) topMargin = dp(8)
         }
         overlayContainer.addView(panel, lp)
         overlayContainer.visibility = View.VISIBLE
@@ -137,8 +170,8 @@ class GameActivity : AndroidApplication(), GameHudListener {
 
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = DotaRebornStyle.beveledPanel(0xED131926.toInt(), 0xED090D15.toInt(), DotaRebornStyle.BRONZE_GOLD, 16f, 3)
-            setPadding(22, 16, 22, 16)
+            background = DotaRebornStyle.beveledPanel(0xED131926.toInt(), 0xED090D15.toInt(), DotaRebornStyle.BRONZE_GOLD, dp(10).toFloat(), 3)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
         }
 
         val header = LinearLayout(this).apply {
@@ -146,27 +179,30 @@ class GameActivity : AndroidApplication(), GameHudListener {
             gravity = Gravity.CENTER_VERTICAL
         }
         val goldTv = TextView(this).apply {
-            textSize = 15f
+            textSize = 14f
             setTypeface(null, Typeface.BOLD)
             setTextColor(DotaRebornStyle.GOLD_BRIGHT)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         header.addView(goldTv)
 
+        lateinit var refreshShop: () -> Unit
+
         if (world.mode == GameMode.SANDBOX) {
             header.addView(DotaRebornStyle.rebornButton(this, "+10k Gold", DotaRebornStyle.EMERALD_TOP, DotaRebornStyle.EMERALD_BOT, 0xFF34D399.toInt()) {
                 synchronized(world) { ph.gold += 10000; ph.recalcStats() }
-                onOpenShop()
+                refreshShop()
             })
             header.addView(DotaRebornStyle.rebornButton(this, "+LVL", 0xFF1E3A8A.toInt(), 0xFF0F172A.toInt(), 0xFF60A5FA.toInt()) {
                 synchronized(world) { ph.addXp(1500) }
-                onOpenShop()
+                refreshShop()
             })
             header.addView(DotaRebornStyle.rebornButton(this, "Reset CD", 0xFF7C2D12.toInt(), 0xFF451A03.toInt(), 0xFFF59E0B.toInt()) {
                 synchronized(world) {
                     for (i in 0..3) ph.abilityCooldowns[i] = 0f
                     ph.hp = ph.maxHp; ph.mana = ph.maxMana
                 }
+                Toast.makeText(this, "Cooldowns & HP/Mana reset!", Toast.LENGTH_SHORT).show()
             })
         }
 
@@ -179,12 +215,16 @@ class GameActivity : AndroidApplication(), GameHudListener {
         })
         panel.addView(header)
 
-        val tabRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+        val tabScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = 8; bottomMargin = 8
+                topMargin = dp(4); bottomMargin = dp(5)
             }
         }
+        val tabRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        tabScroll.addView(tabRow)
         val bodyRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
@@ -198,27 +238,25 @@ class GameActivity : AndroidApplication(), GameHudListener {
 
         val treeScroll = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 0.95f).apply {
-                leftMargin = 14
+                leftMargin = dp(8)
             }
         }
         val treePanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = DotaRebornStyle.beveledPanel(0xE00E1420.toInt(), 0xE0080B12.toInt(), DotaRebornStyle.BRONZE_DARK, 12f, 2)
-            setPadding(16, 14, 16, 14)
+            background = DotaRebornStyle.beveledPanel(0xE00E1420.toInt(), 0xE0080B12.toInt(), DotaRebornStyle.BRONZE_DARK, dp(8).toFloat(), 2)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
         }
         treeScroll.addView(treePanel)
 
         bodyRow.addView(leftListScroll)
         bodyRow.addView(treeScroll)
 
-        lateinit var refreshShop: () -> Unit
-
         fun renderCraftTree() {
             synchronized(world) {
                 treePanel.removeAllViews()
                 val effCost = world.effectiveItemCost(ph, inspectedItem)
                 val canAfford = ph.gold >= effCost
-                val ownedIds = (ph.inventory + ph.stash).map { it.itemId }
+                val ownedIds = world.allOwnedItemIds(ph)
 
                 val topHeader = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
@@ -228,7 +266,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
                     topHeader.addView(ImageView(this).apply {
                         setImageBitmap(bmp)
                         scaleType = ImageView.ScaleType.CENTER_CROP
-                        layoutParams = LinearLayout.LayoutParams(72, 54).apply { rightMargin = 12 }
+                        layoutParams = LinearLayout.LayoutParams(dp(44), dp(33)).apply { rightMargin = dp(8) }
                     })
                 }
                 val titleBox = LinearLayout(this).apply {
@@ -306,7 +344,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
                     })
 
                     fun addTreeNode(node: ItemCatalog.RecipeNode, depth: Int) {
-                        val indent = depth * 22
+                        val indent = depth * dp(12)
                         val nodeAfford = !node.owned && ph.gold >= world.effectiveItemCost(ph, node.item)
                         val nodeCost = world.effectiveItemCost(ph, node.item)
                         val row = LinearLayout(this).apply {
@@ -316,12 +354,12 @@ class GameActivity : AndroidApplication(), GameHudListener {
                                 if (node.owned) 0xCC064E3B.toInt() else 0xCC161E2E.toInt(),
                                 0xCC0B101A.toInt(),
                                 if (node.owned) 0xFF34D399.toInt() else if (nodeAfford) DotaRebornStyle.BRONZE_GOLD else 0xFF334155.toInt(),
-                                8f, 2
+                                dp(5).toFloat(), 2
                             )
-                            setPadding(10, 6, 10, 6)
+                            setPadding(dp(6), dp(4), dp(6), dp(4))
                             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                                 leftMargin = indent
-                                bottomMargin = 5
+                                bottomMargin = dp(3)
                             }
                             setOnClickListener {
                                 if (depth > 0 && !node.owned) {
@@ -335,15 +373,18 @@ class GameActivity : AndroidApplication(), GameHudListener {
                                         refreshShop()
                                     } else {
                                         inspectedItem = node.item
-                                        renderCraftTree()
+                                        refreshShop()
                                     }
+                                } else if (depth > 0) {
+                                    inspectedItem = node.item
+                                    refreshShop()
                                 }
                             }
                         }
                         if (depth > 0) {
                             row.addView(TextView(this).apply {
                                 text = "└ "
-                                textSize = 12f
+                                textSize = 11.5f
                                 setTextColor(DotaRebornStyle.BRONZE_GOLD)
                             })
                         }
@@ -351,7 +392,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
                             row.addView(ImageView(this).apply {
                                 setImageBitmap(bmp)
                                 scaleType = ImageView.ScaleType.CENTER_CROP
-                                layoutParams = LinearLayout.LayoutParams(40, 30).apply { rightMargin = 8 }
+                                layoutParams = LinearLayout.LayoutParams(dp(26), dp(20)).apply { rightMargin = dp(6) }
                             })
                         }
                         row.addView(TextView(this).apply {
@@ -413,7 +454,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
                             uRow.addView(ImageView(this).apply {
                                 setImageBitmap(bmp)
                                 scaleType = ImageView.ScaleType.CENTER_CROP
-                                layoutParams = LinearLayout.LayoutParams(34, 26).apply { rightMargin = 8 }
+                                layoutParams = LinearLayout.LayoutParams(dp(24), dp(18)).apply { rightMargin = dp(6) }
                             })
                         }
                         uRow.addView(TextView(this).apply {
@@ -430,14 +471,30 @@ class GameActivity : AndroidApplication(), GameHudListener {
         refreshShop = {
             synchronized(world) {
                 goldTv.text = "DOTA 3 ARMORY  •  GOLD: ${ph.gold}g  •  STASH: ${ph.stash.size}  •  SHARD: ${if (ph.hasShard) "YES" else "NO"}"
+                tabRow.removeAllViews()
+                for (cat in ItemCategory.entries) {
+                    val isTabSel = cat == selectedCat
+                    tabRow.addView(DotaRebornStyle.rebornButton(
+                        this, cat.title,
+                        if (isTabSel) 0xFF1E293B.toInt() else DotaRebornStyle.SLATE_TOP,
+                        DotaRebornStyle.SLATE_BOT,
+                        if (isTabSel) DotaRebornStyle.GOLD_BRIGHT else DotaRebornStyle.BRONZE_DARK, 11f
+                    ) {
+                        selectedCat = cat
+                        refreshShop()
+                    })
+                }
                 itemListLayout.removeAllViews()
 
                 if (ph.inventory.isNotEmpty()) {
+                    val invScroll = HorizontalScrollView(this).apply {
+                        isHorizontalScrollBarEnabled = false
+                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                            bottomMargin = dp(5)
+                        }
+                    }
                     val invRow = LinearLayout(this).apply {
                         orientation = LinearLayout.HORIZONTAL
-                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                            bottomMargin = 8
-                        }
                     }
                     ph.inventory.toList().forEachIndexed { idx, slot ->
                         val def = ItemCatalog.get(slot.itemId)
@@ -447,7 +504,8 @@ class GameActivity : AndroidApplication(), GameHudListener {
                             refreshShop()
                         })
                     }
-                    itemListLayout.addView(invRow)
+                    invScroll.addView(invRow)
+                    itemListLayout.addView(invScroll)
                 }
 
                 for (item in ItemCatalog.allItems.filter { it.category == selectedCat }) {
@@ -461,11 +519,11 @@ class GameActivity : AndroidApplication(), GameHudListener {
                             if (isSelected) 0xEE1E2A3F.toInt() else 0xDD131A28.toInt(),
                             0xDD0A0E17.toInt(),
                             if (isSelected) DotaRebornStyle.GOLD_BRIGHT else if (canAfford) DotaRebornStyle.BRONZE_GOLD else 0xFF334155.toInt(),
-                            10f, 2
+                            dp(6).toFloat(), 2
                         )
-                        setPadding(10, 7, 10, 7)
+                        setPadding(dp(7), dp(5), dp(7), dp(5))
                         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                            bottomMargin = 6
+                            bottomMargin = dp(4)
                         }
                         setOnClickListener {
                             inspectedItem = item
@@ -476,7 +534,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
                         row.addView(ImageView(this).apply {
                             setImageBitmap(bmp)
                             scaleType = ImageView.ScaleType.CENTER_CROP
-                            layoutParams = LinearLayout.LayoutParams(52, 40).apply { rightMargin = 10 }
+                            layoutParams = LinearLayout.LayoutParams(dp(34), dp(26)).apply { rightMargin = dp(7) }
                         })
                     }
                     val info = LinearLayout(this).apply {
@@ -517,14 +575,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
             renderCraftTree()
         }
 
-        for (cat in ItemCategory.entries) {
-            tabRow.addView(DotaRebornStyle.rebornButton(this, cat.title, DotaRebornStyle.SLATE_TOP, DotaRebornStyle.SLATE_BOT, DotaRebornStyle.BRONZE_GOLD, 11f) {
-                selectedCat = cat
-                refreshShop()
-            })
-        }
-
-        panel.addView(tabRow)
+        panel.addView(tabScroll)
         panel.addView(bodyRow)
         refreshShop()
         showOverlay(panel)
@@ -537,8 +588,8 @@ class GameActivity : AndroidApplication(), GameHudListener {
         val ph = world.playerHero
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = DotaRebornStyle.beveledPanel(0xED131926.toInt(), 0xED090D15.toInt(), DotaRebornStyle.BRONZE_GOLD, 16f, 3)
-            setPadding(24, 18, 24, 18)
+            background = DotaRebornStyle.beveledPanel(0xED131926.toInt(), 0xED090D15.toInt(), DotaRebornStyle.BRONZE_GOLD, dp(10).toFloat(), 3)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
         }
 
         val header = LinearLayout(this).apply {
@@ -549,7 +600,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
             header.addView(ImageView(this).apply {
                 setImageBitmap(bmp)
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                layoutParams = LinearLayout.LayoutParams(96, 54).apply { rightMargin = 12 }
+                layoutParams = LinearLayout.LayoutParams(dp(56), dp(32)).apply { rightMargin = dp(8) }
             })
         }
         header.addView(TextView(this).apply {
@@ -615,13 +666,13 @@ class GameActivity : AndroidApplication(), GameHudListener {
 
                     val lvlBadge = TextView(this).apply {
                         text = "${t.level}"
-                        textSize = 14f
+                        textSize = 13.5f
                         setTypeface(null, Typeface.BOLD)
                         setTextColor(if (unlocked) DotaRebornStyle.GOLD_BRIGHT else 0xFF64748B.toInt())
                         gravity = Gravity.CENTER
                         background = DotaRebornStyle.beveledPanel(0xEE182235.toInt(), 0xEE0B0F18.toInt(),
-                            if (unlocked) DotaRebornStyle.BRONZE_GOLD else 0xFF334155.toInt(), 22f, 2)
-                        layoutParams = LinearLayout.LayoutParams(54, 44).apply { leftMargin = 8; rightMargin = 8 }
+                            if (unlocked) DotaRebornStyle.BRONZE_GOLD else 0xFF334155.toInt(), dp(13).toFloat(), 2)
+                        layoutParams = LinearLayout.LayoutParams(dp(34), dp(28)).apply { leftMargin = dp(5); rightMargin = dp(5) }
                     }
 
                     val rBtn = DotaRebornStyle.rebornButton(
@@ -654,8 +705,8 @@ class GameActivity : AndroidApplication(), GameHudListener {
     override fun onOpenScoreboard() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = DotaRebornStyle.beveledPanel(0xED131926.toInt(), 0xED090D15.toInt(), DotaRebornStyle.BRONZE_GOLD, 16f, 3)
-            setPadding(24, 16, 24, 16)
+            background = DotaRebornStyle.beveledPanel(0xED131926.toInt(), 0xED090D15.toInt(), DotaRebornStyle.BRONZE_GOLD, dp(10).toFloat(), 3)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
         }
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -664,7 +715,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
         synchronized(world) {
             header.addView(TextView(this).apply {
                 text = "BATTLE SCOREBOARD  •  RADIANT ${world.radiantKills} - ${world.direKills} DIRE"
-                textSize = 15.5f
+                textSize = 15f
                 setTypeface(null, Typeface.BOLD)
                 setTextColor(DotaRebornStyle.GOLD_BRIGHT)
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -674,13 +725,16 @@ class GameActivity : AndroidApplication(), GameHudListener {
             })
             panel.addView(header)
 
-            // Tactical Ally Bot Orders strip inside Scoreboard
+            // Tactical Ally Bot Orders strip inside Scoreboard (horizontally scrollable for compact phones)
+            val tacScroll = HorizontalScrollView(this).apply {
+                isHorizontalScrollBarEnabled = false
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = dp(4); bottomMargin = dp(5)
+                }
+            }
             val tacBar = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = 6; bottomMargin = 8
-                }
             }
             tacBar.addView(TextView(this).apply {
                 text = "ALLY BOTS: "
@@ -700,7 +754,8 @@ class GameActivity : AndroidApplication(), GameHudListener {
                     closeOverlay()
                 })
             }
-            panel.addView(tacBar)
+            tacScroll.addView(tacBar)
+            panel.addView(tacScroll)
 
             val scroll = ScrollView(this).apply {
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
@@ -732,7 +787,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
                     DotaAssetLoader.getHeroCirclePortrait(h.def.id, 44)?.let { bmp ->
                         row.addView(ImageView(this).apply {
                             setImageBitmap(bmp)
-                            layoutParams = LinearLayout.LayoutParams(34, 34).apply { rightMargin = 8 }
+                            layoutParams = LinearLayout.LayoutParams(dp(22), dp(22)).apply { rightMargin = dp(5) }
                         })
                     }
                     val gpm = (h.totalGoldEarned / mins).toInt()
@@ -746,7 +801,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
                         DotaAssetLoader.getItemIcon(slot.itemId)?.let { ibmp ->
                             row.addView(ImageView(this).apply {
                                 setImageBitmap(ibmp)
-                                layoutParams = LinearLayout.LayoutParams(28, 22).apply { leftMargin = 4 }
+                                layoutParams = LinearLayout.LayoutParams(dp(19), dp(14)).apply { leftMargin = dp(3) }
                             })
                         }
                     }
@@ -838,7 +893,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
                 textSize = 11f
                 setTextColor(0xFF93C5FD.toInt())
                 gravity = Gravity.END
-                layoutParams = LinearLayout.LayoutParams(68, LinearLayout.LayoutParams.WRAP_CONTENT)
+                layoutParams = LinearLayout.LayoutParams(dp(40), LinearLayout.LayoutParams.WRAP_CONTENT)
             }
             fun fmt(v: Float) = if (fmtPct) "${(v * 100f).roundToInt()}%" else "${(v * 100f).roundToInt()}"
             valTv.text = fmt(curVal)
@@ -847,7 +902,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
                 text = label
                 textSize = 11.5f
                 setTextColor(Color.WHITE)
-                layoutParams = LinearLayout.LayoutParams(168, LinearLayout.LayoutParams.WRAP_CONTENT)
+                layoutParams = LinearLayout.LayoutParams(dp(96), LinearLayout.LayoutParams.WRAP_CONTENT)
             })
             val sb = SeekBar(this).apply {
                 max = 100
@@ -883,13 +938,13 @@ class GameActivity : AndroidApplication(), GameHudListener {
 
         val wrap = ScrollView(this).apply {
             addView(panel)
-            layoutParams = ViewGroup.LayoutParams(
-                (resources.displayMetrics.widthPixels * 0.46f).toInt().coerceIn(420, 680),
-                (resources.displayMetrics.heightPixels * 0.56f).toInt().coerceIn(240, 440)
-            )
         }
-        // Translucent scrim = transparent so user watches live HUD geometry resize/shift cleanly
-        showOverlay(wrap, scrimColor = 0x22000000, dismissOnScrim = false, centered = false)
+        val customW = (resources.displayMetrics.widthPixels * 0.48f).toInt().coerceIn(dp(260), dp(460))
+            .coerceAtMost((resources.displayMetrics.widthPixels * 0.72f).toInt())
+        val customH = (resources.displayMetrics.heightPixels * 0.54f).toInt().coerceIn(dp(180), dp(310))
+            .coerceAtMost((resources.displayMetrics.heightPixels * 0.62f).toInt())
+        // Translucent scrim so user watches live HUD geometry resize/shift cleanly above the bottom console
+        showOverlay(wrap, scrimColor = 0x22000000, dismissOnScrim = false, centered = false, customWidth = customW, customHeight = customH)
     }
 
     // ==================== 5. EMBEDDED MATCH SUMMARY OVERLAY ====================

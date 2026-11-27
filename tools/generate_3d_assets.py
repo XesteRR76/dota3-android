@@ -615,12 +615,12 @@ def build_weapon_models():
     m.add_torus(8.8, 1.5, 14, 6, center=(0, 0, 38), rot=(90, 0, 0), uv_rect=(0.05, 0.05, 0.95, 0.30))
     models["weapon_totem"] = m
 
-    # Ornate Arcane Staff (Invoker / CM)
+    # Ornate Arcane Staff (Invoker / CM - extends along +Z so .rotate(X, 90) aligns with all weapons)
     m = ObjBuilder()
-    m.add_swept_profile([(0, -24, 0), (0, 0, 0), (0, 28, 0), (2, 38, 4)],
+    m.add_swept_profile([(0, 0, -24), (0, 0, 0), (0, 0, 28), (0, 2, 38)],
                         [(2.0, 2.0), (2.2, 2.2), (2.5, 2.5), (1.8, 1.8)], segs=8, uv_rect=(0.05, 0.72, 0.95, 0.95))
-    m.add_crystal(6.5, 6.5, 11.0, 9.0, segs=6, center=(2, 46, 4), uv_rect=(0.05, 0.05, 0.95, 0.30))
-    m.add_torus(8.5, 1.2, 14, 6, center=(2, 45, 4), rot=(25, 0, 25), uv_rect=(0.05, 0.05, 0.95, 0.30))
+    m.add_crystal(6.5, 6.5, 11.0, 9.0, segs=6, center=(0, 2, 46), rot=(90, 0, 0), uv_rect=(0.05, 0.05, 0.95, 0.30))
+    m.add_torus(8.5, 1.2, 14, 6, center=(0, 2, 45), rot=(65, 0, 25), uv_rect=(0.05, 0.05, 0.95, 0.30))
     models["weapon_staff"] = m
 
     # Sniper Precision Rifle + Scope

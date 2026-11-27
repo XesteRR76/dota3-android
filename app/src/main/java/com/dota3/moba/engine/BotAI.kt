@@ -189,21 +189,23 @@ object BotAI {
         }
 
         // Target priority
+        val marchObjective = activeCmd == TacticalCommand.ROSHAN || activeCmd == TacticalCommand.DEFEND
         val target: CombatUnit? = when {
             activeCmd == TacticalCommand.ROSHAN && bestHeroTarget != null && bestHeroTarget.pos.distTo(MapLayout.roshanPitPos) < 550f -> bestHeroTarget
             activeCmd == TacticalCommand.ROSHAN && roshanTarget != null -> roshanTarget
             baseThreat != null -> baseThreat
             activeCmd == TacticalCommand.DEFEND && baseCreepThreat != null -> baseCreepThreat
+            activeCmd == TacticalCommand.DEFEND && bestHeroTarget != null && bestHeroTarget.pos.distTo(ownAncient.pos) < 1900f -> bestHeroTarget
             activeCmd == TacticalCommand.PUSH && nearEnemyTowers.isNotEmpty() -> nearEnemyTowers.first()
             activeCmd == TacticalCommand.PUSH && nearEnemyRax.isNotEmpty() -> nearEnemyRax.first()
             activeCmd == TacticalCommand.PUSH && enemyAncient.pos.distTo(hero.pos) < 880f && world.isAncientVulnerable(enemyAncient.team) -> enemyAncient
-            lastHitCreep != null && (bestHeroTarget == null || bestHeroTarget.hp > bestHeroTarget.maxHp * 0.35f) -> lastHitCreep
-            denyCreep != null && bestHeroTarget == null -> denyCreep
-            bestHeroTarget != null && (bestHeroTarget.pos.distTo(hero.pos) < 620f || bestHeroTarget.hp < bestHeroTarget.maxHp * 0.45f) -> bestHeroTarget
-            nearEnemyCreeps.isNotEmpty() -> nearEnemyCreeps.minByOrNull { it.hp }
-            nearEnemyTowers.isNotEmpty() -> nearEnemyTowers.first()
-            nearEnemyRax.isNotEmpty() -> nearEnemyRax.first()
-            enemyAncient.pos.distTo(hero.pos) < 850f && world.isAncientVulnerable(enemyAncient.team) -> enemyAncient
+            !marchObjective && lastHitCreep != null && (bestHeroTarget == null || bestHeroTarget.hp > bestHeroTarget.maxHp * 0.35f) -> lastHitCreep
+            !marchObjective && denyCreep != null && bestHeroTarget == null -> denyCreep
+            !marchObjective && bestHeroTarget != null && (bestHeroTarget.pos.distTo(hero.pos) < 620f || bestHeroTarget.hp < bestHeroTarget.maxHp * 0.45f) -> bestHeroTarget
+            !marchObjective && nearEnemyCreeps.isNotEmpty() -> nearEnemyCreeps.minByOrNull { it.hp }
+            !marchObjective && nearEnemyTowers.isNotEmpty() -> nearEnemyTowers.first()
+            !marchObjective && nearEnemyRax.isNotEmpty() -> nearEnemyRax.first()
+            !marchObjective && enemyAncient.pos.distTo(hero.pos) < 850f && world.isAncientVulnerable(enemyAncient.team) -> enemyAncient
             else -> null
         }
 
@@ -294,7 +296,7 @@ object BotAI {
             val nextId = plan[hero.botItemPlanIndex]
             val item = ItemCatalog.get(nextId)
             if (item != null) {
-                if (hero.hasItem(nextId)) {
+                if (nextId in world.allOwnedItemIds(hero)) {
                     hero.botItemPlanIndex++
                 } else if (world.canAffordItem(hero, nextId)) {
                     if (world.buyItem(hero, nextId)) {

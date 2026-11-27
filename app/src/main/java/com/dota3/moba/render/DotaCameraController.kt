@@ -34,8 +34,8 @@ class DotaCameraController(
     initialY: Float = 4000f
 ) {
     val cameraPos = Vec2(initialX, initialY)
-    var cameraLocked: Boolean = true
-    var baseZoomDist: Float = 900f
+    @Volatile var cameraLocked: Boolean = true
+    @Volatile var baseZoomDist: Float = 900f
 
     val lookAhead = Vec2(0f, 0f)
     val skillshotShift = Vec2(0f, 0f)

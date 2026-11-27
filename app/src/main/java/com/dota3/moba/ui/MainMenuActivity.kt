@@ -37,10 +37,11 @@ class MainMenuActivity : AppCompatActivity() {
             }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         }
 
+        val dp = { v: Int -> (v * resources.displayMetrics.density).toInt().coerceAtLeast(1) }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xA607090F.toInt())
-            setPadding(42, 26, 42, 26)
+            setPadding(dp(22), dp(14), dp(22), dp(14))
         }
 
         val header = LinearLayout(this).apply {

@@ -163,7 +163,13 @@ class GameWorld(
         couriers.add(CourierEntity(playerHero.id, playerTeam, fountainPos(playerTeam)))
 
         if (mode == GameMode.MID_1V1 || mode == GameMode.SANDBOX) {
-            val enemyId = pool.removeAt(0)
+            val preEnemy = draftedEnemyHeroIds.firstOrNull { it != playerHeroId }
+            val enemyId = if (preEnemy != null) {
+                pool.remove(preEnemy)
+                preEnemy
+            } else {
+                pool.removeAt(0)
+            }
             val enemyTeam = playerTeam.enemy()
             val enemy = HeroEntity(
                 id = "hero_enemy_0",
@@ -2209,9 +2215,20 @@ class GameWorld(
         return hero.gold >= effectiveItemCost(hero, def)
     }
 
+    fun allOwnedItemIds(hero: HeroEntity): List<String> {
+        val courier = couriers.firstOrNull { it.heroId == hero.id }
+        val ids = ArrayList<String>(hero.inventory.size + hero.stash.size + (courier?.cargo?.size ?: 0))
+        for (s in hero.inventory) ids.add(s.itemId)
+        for (s in hero.stash) ids.add(s.itemId)
+        if (courier != null) {
+            for (s in courier.cargo) ids.add(s.itemId)
+        }
+        return ids
+    }
+
     fun effectiveItemCost(hero: HeroEntity, def: ItemDef): Int {
         var cost = def.cost
-        val allOwned = (hero.inventory + hero.stash).map { it.itemId }.toMutableList()
+        val allOwned = allOwnedItemIds(hero).toMutableList()
         fun deduct(compIds: List<String>) {
             for (compId in compIds) {
                 val compDef = ItemCatalog.get(compId) ?: continue
@@ -2243,9 +2260,11 @@ class GameWorld(
         }
 
         val atFountain = hero.pos.distTo(fountainPos(hero.team)) < 480f
-        // Snapshot & remove consumed components (supports nested sub-components!), rolling back if no space
+        val courier = couriers.firstOrNull { it.heroId == hero.id }
+        // Snapshot & remove consumed components across inventory, stash & active courier cargo
         val removedFromInv = mutableListOf<ItemSlot>()
         val removedFromStash = mutableListOf<ItemSlot>()
+        val removedFromCargo = mutableListOf<ItemSlot>()
         fun consumeComponents(compIds: List<String>) {
             for (compId in compIds) {
                 val invIdx = hero.inventory.indexOfFirst { it.itemId == compId }
@@ -2256,9 +2275,14 @@ class GameWorld(
                     if (stIdx >= 0) {
                         removedFromStash.add(hero.stash.removeAt(stIdx))
                     } else {
-                        val compDef = ItemCatalog.get(compId)
-                        if (compDef != null && compDef.components.isNotEmpty()) {
-                            consumeComponents(compDef.components)
+                        val crIdx = courier?.cargo?.indexOfFirst { it.itemId == compId } ?: -1
+                        if (courier != null && crIdx >= 0) {
+                            removedFromCargo.add(courier.cargo.removeAt(crIdx))
+                        } else {
+                            val compDef = ItemCatalog.get(compId)
+                            if (compDef != null && compDef.components.isNotEmpty()) {
+                                consumeComponents(compDef.components)
+                            }
                         }
                     }
                 }
@@ -2269,22 +2293,34 @@ class GameWorld(
         val newSlot = ItemSlot(itemId, stacks = 1, charges = if (itemId == "magic_wand") 3 else 0)
         hero.gold -= price
 
-        val placed = if (atFountain || mode == GameMode.TURBO_5V5 || mode == GameMode.SANDBOX) {
-            if (addOrStackToInventory(hero, newSlot)) true
-            else if (hero.stash.size < 6) { hero.stash.add(newSlot); true }
-            else false
-        } else {
-            if (hero.stash.size < 6) { hero.stash.add(newSlot); true }
-            else addOrStackToInventory(hero, newSlot)
+        val allCompsInInv = removedFromInv.isNotEmpty() && removedFromStash.isEmpty() && removedFromCargo.isEmpty()
+        val placed = when {
+            atFountain || mode == GameMode.TURBO_5V5 || mode == GameMode.SANDBOX || allCompsInInv -> {
+                if (addOrStackToInventory(hero, newSlot)) true
+                else if (hero.stash.size < 6) { hero.stash.add(newSlot); true }
+                else false
+            }
+            removedFromCargo.isNotEmpty() && courier != null -> {
+                courier.cargo.add(newSlot)
+                courier.delivering = true
+                courier.returning = false
+                true
+            }
+            else -> {
+                if (hero.stash.size < 6) { hero.stash.add(newSlot); true }
+                else addOrStackToInventory(hero, newSlot)
+            }
         }
         if (!placed) {
             hero.gold += price
             hero.inventory.addAll(removedFromInv)
             hero.stash.addAll(removedFromStash)
+            courier?.cargo?.addAll(removedFromCargo)
             return false
         }
 
         if (itemId == "aghanims_scepter") hero.hasScepter = true
+        if (hero.quickBuyItemId == itemId) hero.quickBuyItemId = null
         hero.recalcStats()
         if (hero.isPlayer) SoundEngine.play(SoundCue.BUY_ITEM)
         return true
@@ -2433,7 +2469,6 @@ class GameWorld(
                     killer.gold += bounty
                     killer.reliableGold += bounty
                     killer.totalGoldEarned += bounty
-                    if (killer.isPlayer && !playedFirstBlood) SoundEngine.play(SoundCue.HERO_KILL)
                     addFloatingText(victim.pos, "+${bounty}g", 0xFFF1C40F.toInt(), scale = 1.3f)
 
                     // Desolator & PA Scepter & Axe & Pudge stacks
@@ -2475,9 +2510,11 @@ class GameWorld(
                     }
                     if (ksTitle != null) {
                         addAnnouncement(ksTitle, "${killer.def.name} (${killer.kills}/${killer.deaths})", 0xFFF39C12.toInt())
-                        if (killer.isPlayer) {
+                        if (killer.isPlayer && !playedFirstBlood) {
                             SoundEngine.play(if (killer.killStreak >= 6) SoundCue.GODLIKE else SoundCue.KILL_SPREE)
                         }
+                    } else if (killer.isPlayer && !playedFirstBlood) {
+                        SoundEngine.play(SoundCue.HERO_KILL)
                     }
 
                     // 1v1 Mid win check (2 kills wins!)
@@ -2861,6 +2898,12 @@ class GameWorld(
     }
 
     fun issueTacticalCommand(cmd: TacticalCommand) {
+        if (cmd == TacticalCommand.ROSHAN && !roshan.alive) {
+            addPing(MapLayout.roshanPitPos, cmd.colorHex)
+            addFloatingText(playerHero.pos, "ROSHAN DEAD (${roshan.respawnTimer.toInt()}s)", cmd.colorHex, 1.4f, 1.15f)
+            SoundEngine.play(SoundCue.TACTICAL_PING)
+            return
+        }
         allyCommand = cmd
         allyCommandTimer = if (cmd == TacticalCommand.AUTO) 0f else 32f
         val pingPos = when (cmd) {
@@ -2874,7 +2917,7 @@ class GameWorld(
         addPing(pingPos, cmd.colorHex)
         val msg = when (cmd) {
             TacticalCommand.PUSH -> "ALLIES: PUSH!"
-            TacticalCommand.ROSHAN -> if (roshan.alive) "ALLIES: TAKE ROSHAN!" else "ROSHAN DEAD (${roshan.respawnTimer.toInt()}s)"
+            TacticalCommand.ROSHAN -> "ALLIES: TAKE ROSHAN!"
             TacticalCommand.DEFEND -> "ALLIES: DEFEND BASE!"
             TacticalCommand.RETREAT -> "ALLIES: RETREAT!"
             TacticalCommand.AUTO -> "ALLIES: AUTO AI"
@@ -2893,7 +2936,7 @@ class GameWorld(
         h.attackTargetId = target.id
         h.attackCommandAge = 0f
         h.facingAngle = h.pos.angleTo(target.pos)
-        if (target.pos.distTo(h.pos) > h.cachedAttackRange) {
+        if (target.pos.distTo(h.pos) > h.cachedAttackRange + target.radius * 0.5f) {
             h.tapMoveTarget = target.pos.copyVec()
         } else if (!h.isStunned() && !h.isDisarmed() && h.omnislashTimer <= 0f && h.dismemberTimer <= 0f && h.freezingFieldTimer <= 0f) {
             performHeroAutoAttack(h)
@@ -2919,7 +2962,7 @@ class GameWorld(
                 h.attackTargetId = denyCreep.id
                 h.attackCommandAge = 0f
                 h.facingAngle = h.pos.angleTo(denyCreep.pos)
-                if (denyCreep.pos.distTo(h.pos) > h.cachedAttackRange) h.tapMoveTarget = denyCreep.pos.copyVec()
+                if (denyCreep.pos.distTo(h.pos) > h.cachedAttackRange + denyCreep.radius * 0.5f) h.tapMoveTarget = denyCreep.pos.copyVec()
                 else if (!h.isStunned() && !h.isDisarmed()) performHeroAutoAttack(h)
                 return
             }
@@ -2929,7 +2972,8 @@ class GameWorld(
                 h.attackTargetId = denyTower.id
                 h.attackCommandAge = 0f
                 h.facingAngle = h.pos.angleTo(denyTower.pos)
-                if (!h.isStunned() && !h.isDisarmed()) performHeroAutoAttack(h)
+                if (denyTower.pos.distTo(h.pos) > h.cachedAttackRange + denyTower.radius * 0.5f) h.tapMoveTarget = denyTower.pos.copyVec()
+                else if (!h.isStunned() && !h.isDisarmed()) performHeroAutoAttack(h)
                 return
             }
         }
@@ -2955,7 +2999,7 @@ class GameWorld(
             h.attackTargetId = target.id
             h.attackCommandAge = 0f
             h.facingAngle = h.pos.angleTo(target.pos)
-            if (target.pos.distTo(h.pos) > h.cachedAttackRange) {
+            if (target.pos.distTo(h.pos) > h.cachedAttackRange + target.radius * 0.5f) {
                 h.tapMoveTarget = target.pos.copyVec()
             } else if (!h.isStunned() && !h.isDisarmed() && h.omnislashTimer <= 0f && h.dismemberTimer <= 0f && h.freezingFieldTimer <= 0f) {
                 // Instant 0ms MLBB hit responsiveness!

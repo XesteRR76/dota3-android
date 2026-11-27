@@ -55,6 +55,9 @@ object DotaRebornStyle {
         }
     }
 
+    private fun dp(context: Context, v: Int): Int =
+        (v * context.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+
     fun rebornButton(
         context: Context,
         label: String,
@@ -68,8 +71,12 @@ object DotaRebornStyle {
         textSize = textSizeSp
         setTextColor(Color.WHITE)
         setTypeface(null, Typeface.BOLD)
-        background = beveledPanel(topColor, botColor, borderColor, radiusPx = 10f, strokePx = 2)
-        setPadding(18, 10, 18, 10)
+        background = beveledPanel(topColor, botColor, borderColor, radiusPx = dp(context, 6).toFloat(), strokePx = dp(context, 1).coerceAtLeast(2))
+        setPadding(dp(context, 12), dp(context, 6), dp(context, 12), dp(context, 6))
+        minHeight = 0
+        minimumHeight = 0
+        minWidth = 0
+        minimumWidth = 0
         gravity = Gravity.CENTER
         isAllCaps = false
         setShadowLayer(2f, 0f, 1f, Color.BLACK)
@@ -77,7 +84,7 @@ object DotaRebornStyle {
             LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply {
-            setMargins(5, 4, 5, 4)
+            setMargins(dp(context, 3), dp(context, 2), dp(context, 3), dp(context, 2))
         }
         setOnClickListener { onClick(this) }
     }

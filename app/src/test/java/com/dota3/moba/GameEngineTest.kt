@@ -552,19 +552,127 @@ class GameEngineTest {
             HudCustomization(1.28f, 1.20f, 1.18f, 1.28f, 0.06f, 0.04f, 0.04f, 0.04f),
             HudCustomization(1.28f, 1.20f, 1.18f, 1.28f, 0.06f, -0.08f, -0.06f, -0.08f)
         )
-        for ((w, h) in listOf(854f to 480f, 800f to 600f, 2400f to 1080f, 2208f to 1768f)) {
+        for ((w, h) in listOf(854f to 480f, 800f to 600f, 1280f to 720f, 2400f to 1080f, 2208f to 1768f)) {
             for (preset in presets) {
                 geo.layout(w, h, preset)
+                val circles = mutableListOf<Pair<Vec2, Float>>()
+                for (i in 0..3) circles.add(geo.abilityCenters[i] to geo.abilityRadius)
+                circles.add(geo.attackCenter to geo.attackRadius)
+                circles.add(geo.minionCenter to geo.subRadius)
+                circles.add(geo.towerDenyCenter to geo.subRadius)
+                circles.add(geo.courierCenter to geo.utilRadius)
+                circles.add(geo.glyphCenter to geo.utilRadius)
+                circles.add(geo.cancelCenter to geo.cancelRadius)
+                for (i in 0..2) circles.add(geo.targetLockCenters[i] to geo.targetLockRadius)
+
+                for ((idx, pair) in circles.withIndex()) {
+                    val (c, r) = pair
+                    assertTrue("Custom circle $idx OOB at ${w}x${h}", c.x - r >= 0f && c.x + r <= w && c.y - r >= 0f && c.y + r <= h)
+                }
+                for (i in circles.indices) {
+                    for (j in i + 1 until circles.size) {
+                        val d = circles[i].first.distTo(circles[j].first)
+                        val minD = circles[i].second + circles[j].second
+                        assertTrue("Custom circles $i & $j overlap at ${w}x${h}: $d < $minD", d >= minD - 1f)
+                    }
+                }
+                for (i in 0..3) {
+                    val pill = geo.levelUpPills[i]
+                    assertFalse("Custom pill $i overlaps console at ${w}x${h}", pill.overlaps(geo.heroConsole))
+                    val nearX = geo.cancelCenter.x.coerceIn(pill.left, pill.right)
+                    val nearY = geo.cancelCenter.y.coerceIn(pill.top, pill.bottom)
+                    assertTrue("Cancel overlaps pill $i at ${w}x${h}", kotlin.math.hypot(geo.cancelCenter.x - nearX, geo.cancelCenter.y - nearY) >= geo.cancelRadius - 1f)
+                }
                 assertTrue("Joystick left OOB at ${w}x${h}", geo.joystickRestCenter.x - geo.joystickRadius >= 0f)
                 assertTrue("Joystick bottom OOB at ${w}x${h}", geo.joystickRestCenter.y + geo.joystickRadius <= h)
                 assertTrue("Joystick overlaps tactical at ${w}x${h}", geo.joystickRestCenter.y - geo.joystickRadius >= geo.tacticalBtns[3].bottom)
-                assertTrue("Attack right OOB at ${w}x${h}", geo.attackCenter.x + geo.attackRadius <= w)
-                assertTrue("Attack bottom OOB at ${w}x${h}", geo.attackCenter.y + geo.attackRadius <= h)
                 assertTrue("Console overlaps joystick at ${w}x${h}", geo.heroConsole.left >= geo.joystickRestCenter.x + geo.joystickRadius)
                 assertTrue("Console overlaps courier at ${w}x${h}", geo.heroConsole.right <= geo.courierCenter.x - geo.utilRadius)
                 assertTrue("Items overlap courier at ${w}x${h}", geo.itemSlots[5].right <= geo.courierCenter.x - geo.utilRadius)
             }
         }
+    }
+
+    @Test
+    fun courierCargoCountsTowardRecipeCraftAndQuickBuy() {
+        val world = GameWorld("juggernaut", mode = GameMode.ALL_PICK_5V5)
+        val ph = world.playerHero
+        ph.pos.set(2400f, 2400f) // out in mid lane
+        ph.inventory.clear()
+        ph.gold = 4050
+        ph.quickBuyItemId = "bkb"
+
+        // Buy Ogre Axe -> moves into courier cargo in flight
+        assertTrue(world.buyItem(ph, "ogre_axe"))
+        assertTrue(world.dispatchCourier(ph))
+        assertTrue("Ogre Axe should be tracked across inventory/stash/courier", "ogre_axe" in world.allOwnedItemIds(ph))
+
+        // Effective cost of BKB must deduct Ogre Axe while courier is flying!
+        val bkbDef = ItemCatalog.get("bkb")!!
+        assertEquals(3050, world.effectiveItemCost(ph, bkbDef))
+
+        // Buy Mithril Hammer -> also enters stash/courier
+        assertTrue(world.buyItem(ph, "mithril_hammer"))
+        assertTrue(world.dispatchCourier(ph))
+        assertEquals(1450, world.effectiveItemCost(ph, bkbDef))
+
+        // Complete BKB while components are on courier -> clears quickBuy pin & delivers BKB
+        assertTrue(world.buyItem(ph, "bkb"))
+        assertEquals(0, ph.gold)
+        assertNull("Completing pinned item must clear quickBuyItemId", ph.quickBuyItemId)
+        assertTrue("Completed BKB should be owned on courier", "bkb" in world.allOwnedItemIds(ph))
+        assertFalse("Ogre Axe must be consumed from courier", "ogre_axe" in world.allOwnedItemIds(ph))
+
+        // If all components are already in inventory in lane, combine happens directly in inventory!
+        ph.inventory.clear()
+        ph.gold = 4050
+        ph.inventory.add(com.dota3.moba.engine.ItemSlot("ogre_axe"))
+        ph.inventory.add(com.dota3.moba.engine.ItemSlot("mithril_hammer"))
+        assertTrue(world.buyItem(ph, "bkb"))
+        assertTrue("Completed item from inventory components goes straight to inventory", ph.hasItem("bkb"))
+    }
+
+    @Test
+    fun draftedRosterWorksIn1v1AndSandbox() {
+        val w1v1 = GameWorld(
+            playerHeroId = "pudge",
+            playerTeam = Team.RADIANT,
+            mode = GameMode.MID_1V1,
+            draftedEnemyHeroIds = listOf("invoker")
+        )
+        assertEquals(2, w1v1.heroes.size)
+        assertEquals("invoker", w1v1.heroes.first { it.team == Team.DIRE }.def.id)
+
+        val wSb = GameWorld(
+            playerHeroId = "sniper",
+            playerTeam = Team.RADIANT,
+            mode = GameMode.SANDBOX,
+            draftedEnemyHeroIds = listOf("axe")
+        )
+        assertEquals("axe", wSb.heroes.first { it.team == Team.DIRE }.def.id)
+    }
+
+    @Test
+    fun tacticalRoshanIgnoresDistractingLaneCreepsAndDeadRoshan() {
+        val world = GameWorld("juggernaut", playerTeam = Team.RADIANT, mode = GameMode.ALL_PICK_5V5)
+        val ally = world.heroes.first { it.team == Team.RADIANT && !it.isPlayer }
+        // Place ally near mid wave with enemy creep right beside them, far from Roshan pit
+        ally.pos.set(2400f, 2400f)
+        ally.hp = ally.maxHp
+        ally.mana = ally.maxMana
+        world.step(2.1f) // spawn first creep wave
+
+        world.issueTacticalCommand(TacticalCommand.ROSHAN)
+        assertEquals(TacticalCommand.ROSHAN, world.allyCommand)
+        val distBefore = ally.pos.distTo(MapLayout.roshanPitPos)
+        repeat(30) { world.step(0.05f) }
+        assertTrue("Ally ordered ROSHAN must march toward Roshan instead of stopping in lane", ally.pos.distTo(MapLayout.roshanPitPos) < distBefore - 150f)
+
+        // When Roshan is dead, issuing ROSHAN must not hijack bots into empty pit
+        world.applyDamage(world.roshan, 99999f, DamageType.PURE, world.playerHero)
+        assertFalse(world.roshan.alive)
+        world.issueTacticalCommand(TacticalCommand.ROSHAN)
+        assertEquals(TacticalCommand.AUTO, world.allyCommand)
     }
 
     @Test

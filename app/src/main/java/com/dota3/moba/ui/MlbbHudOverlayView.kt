@@ -260,10 +260,9 @@ class MlbbHudOverlayView(
                     world.fogOfWar.isVisible(it.pos.x, it.pos.y) &&
                     (!it.isInvisible() || world.fogOfWar.hasTrueSight(it.pos.x, it.pos.y))
             }
-            .sortedWith(
-                compareBy<HeroEntity> { it.pos.distTo(ph.pos) + it.hp * 0.25f }
-            )
+            .sortedBy { it.pos.distTo(ph.pos) }
             .take(3)
+            .sortedBy { it.id }
     }
 
     private fun drawTargetLockPortraits(canvas: Canvas) {
@@ -532,7 +531,7 @@ class MlbbHudOverlayView(
         val ph = world.playerHero
         val statLine = "GOLD ${ph.gold}  •  ${ph.kills}/${ph.deaths}/${ph.assists}  •  CS ${ph.lastHits}/${ph.denies}"
         textPaint.typeface = Typeface.DEFAULT
-        textPaint.textSize = fitTextSize(statLine, topW * 1.15f, topH * 0.35f, 8.5f)
+        textPaint.textSize = fitTextSize(statLine, (topW - 4f).coerceAtLeast(80f), topH * 0.35f, 7.5f)
         textPaint.color = 0xFFFDE047.toInt()
         canvas.drawText(statLine, th.centerX(), th.bottom + topH * 0.44f, textPaint)
     }
@@ -1181,9 +1180,6 @@ class MlbbHudOverlayView(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        if (event.pointerCount >= 2 && joystickPointerId == -1 && aimPointerId == -1 && minimapPointerId == -1) {
-            scaleDetector.onTouchEvent(event)
-        }
         val action = event.actionMasked
         val idx = event.actionIndex
         val pid = event.getPointerId(idx)
@@ -1193,6 +1189,10 @@ class MlbbHudOverlayView(
         val h = height.toFloat().coerceAtLeast(1f)
 
         synchronized(world) {
+            if (event.pointerCount >= 2 && joystickPointerId == -1 && aimPointerId == -1 && minimapPointerId == -1) {
+                panPointerId = -1
+                scaleDetector.onTouchEvent(event)
+            }
             when (action) {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
                     if (geo.minimap.contains(sx, sy)) {
@@ -1575,15 +1575,17 @@ class MlbbHudOverlayView(
 
     private fun buildQuickBuySuggestions(): List<String> {
         val ph = world.playerHero
-        val owned = (ph.inventory + ph.stash).map { it.itemId }
+        val owned = world.allOwnedItemIds(ph)
         ph.quickBuyItemId?.let { pinned ->
-            if (!ph.hasItem(pinned)) {
+            if (pinned in owned) {
+                ph.quickBuyItemId = null
+            } else {
                 val queue = ItemCatalog.getQuickBuyQueue(pinned, owned)
                 if (queue.isNotEmpty()) return queue.take(2)
             }
         }
-        val hasAnyUpgradedBoots = ph.hasItem("power_treads") || ph.hasItem("phase_boots") ||
-            ph.hasItem("arcane_boots") || ph.hasItem("boots_of_travel")
+        val hasAnyUpgradedBoots = "power_treads" in owned || "phase_boots" in owned ||
+            "arcane_boots" in owned || "boots_of_travel" in owned
         val plan = when {
             ph.def.attribute == PrimaryAttribute.INTELLIGENCE || ph.def.id == "invoker" ->
                 listOf("boots", "magic_wand", "arcane_boots", "blink_dagger", "aghanims_scepter", "bkb", "shivas_guard")
@@ -1593,7 +1595,7 @@ class MlbbHudOverlayView(
                 listOf("boots", "magic_wand", "power_treads", "vanguard", "bkb", "desolator", "heart")
         }
         val targetGoal = plan.firstOrNull { f ->
-            !(f == "boots" && hasAnyUpgradedBoots) && !ph.hasItem(f)
+            !(f == "boots" && hasAnyUpgradedBoots) && f !in owned
         }
         if (targetGoal != null) {
             return ItemCatalog.getQuickBuyQueue(targetGoal, owned).take(2)

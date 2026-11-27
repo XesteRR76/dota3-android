@@ -202,9 +202,9 @@ class HudGeometry {
         towerDenyCenter.set(attackCenter.x + cos(towerRad) * subDist, attackCenter.y + sin(towerRad) * subDist)
 
         // 3 MLBB Enemy Hero Target-Lock Portrait Icons nestled between CREEP (162°) and TWR/! (282°)
-        targetLockRadius = attackRadius * 0.27f
-        val lockDist = attackRadius * 1.62f
-        val lockAnglesDeg = floatArrayOf(192f, 217f, 242f)
+        targetLockRadius = attackRadius * 0.33f
+        val lockDist = attackRadius * 1.72f
+        val lockAnglesDeg = floatArrayOf(191f, 217f, 243f)
         for (i in 0..2) {
             val lRad = Math.toRadians(lockAnglesDeg[i].toDouble()).toFloat()
             targetLockCenters[i].set(attackCenter.x + cos(lRad) * lockDist, attackCenter.y + sin(lRad) * lockDist)

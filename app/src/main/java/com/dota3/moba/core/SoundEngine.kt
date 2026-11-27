@@ -44,7 +44,9 @@ object SoundEngine {
     @Volatile
     var initialized: Boolean = false
 
-    private val executor = Executors.newFixedThreadPool(4)
+    private val executor = Executors.newFixedThreadPool(6) { r ->
+        Thread(r, "dota3-sfx").apply { isDaemon = true }
+    }
     private val lastPlayed = HashMap<SoundCue, Long>()
     private const val SAMPLE_RATE = 22050
 
@@ -66,7 +68,9 @@ object SoundEngine {
             if (now - prev < minGap) return
             lastPlayed[cue] = now
         }
+        val enqueuedAt = now
         executor.execute {
+            if (System.currentTimeMillis() - enqueuedAt > 180L) return@execute
             try {
                 playSynthesized(cue)
             } catch (_: Throwable) {

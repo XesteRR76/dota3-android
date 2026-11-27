@@ -114,7 +114,7 @@ class World3DRenderer(
     private val camLock = Any()
     private val snapInvProjView = Matrix4()
     private val snapCamPos = Vector3()
-    private val snapViewportW = 1280f
+    private var snapGroundY = 0f
     private var snapWidth = 1280f
     private var snapHeight = 720f
 
@@ -125,8 +125,10 @@ class World3DRenderer(
 
     private lateinit var terrainModel: Model
     private lateinit var terrainInstance: ModelInstance
+    private lateinit var terrainTex: Texture
     private lateinit var waterModel: Model
     private lateinit var waterInstance: ModelInstance
+    private lateinit var waterTex: Texture
     private lateinit var waterTexAttr: TextureAttribute
 
     private lateinit var fogModel: Model
@@ -173,7 +175,9 @@ class World3DRenderer(
                     if (em != null) em.color.set(r * emissive, g * emissive, b * emissive, 1f)
                     else mat.set(ColorAttribute.createEmissive(r * emissive, g * emissive, b * emissive, 1f))
                 } else {
-                    mat.remove(ColorAttribute.Emissive)
+                    val em = mat.get(ColorAttribute.Emissive) as? ColorAttribute
+                    if (em != null) em.color.set(0f, 0f, 0f, 1f)
+                    else mat.set(ColorAttribute.createEmissive(0f, 0f, 0f, 1f))
                 }
                 if (isBlended) {
                     val bl = mat.get(BlendingAttribute.Type) as? BlendingAttribute
@@ -186,14 +190,17 @@ class World3DRenderer(
     }
 
     override fun create() {
+        if (loadedModels.isNotEmpty() || loadedTextures.isNotEmpty()) {
+            dispose()
+        }
         ObjLoader.logWarning = false
 
         viewportWidth = Gdx.graphics.width.coerceAtLeast(1)
         viewportHeight = Gdx.graphics.height.coerceAtLeast(1)
 
         camera = PerspectiveCamera(41f, viewportWidth.toFloat(), viewportHeight.toFloat()).apply {
-            near = 60f
-            far = 3600f
+            near = 110f
+            far = 3200f
         }
 
         modelBatch = ModelBatch()
@@ -323,7 +330,7 @@ class World3DRenderer(
         }
     }
 
-    private fun createTerrainModel() {
+    private fun buildTerrainTexture(): Texture {
         val texSize = 512
         val mapPix = Pixmap(texSize, texSize, Pixmap.Format.RGBA8888)
         val segs = ArrayList<Pair<Vec2, Vec2>>(18)
@@ -458,6 +465,11 @@ class World3DRenderer(
         }
         mapPix.dispose()
         loadedTextures.add(mapTex)
+        return mapTex
+    }
+
+    private fun createTerrainModel() {
+        terrainTex = buildTerrainTexture()
 
         val grid = 128
         val count = grid + 1
@@ -517,7 +529,7 @@ class World3DRenderer(
         val mb = ModelBuilder()
         mb.begin()
         val mat = Material(
-            TextureAttribute.createDiffuse(mapTex),
+            TextureAttribute.createDiffuse(terrainTex),
             ColorAttribute.createSpecular(0.08f, 0.08f, 0.10f, 1f),
             FloatAttribute.createShininess(6f)
         )
@@ -527,7 +539,7 @@ class World3DRenderer(
         terrainInstance = ModelInstance(terrainModel)
     }
 
-    private fun createWaterModel() {
+    private fun buildWaterTexture(): Texture {
         val ws = 128
         val wpix = Pixmap(ws, ws, Pixmap.Format.RGBA8888)
         for (y in 0 until ws) {
@@ -542,13 +554,17 @@ class World3DRenderer(
                 wpix.drawPixel(x, y)
             }
         }
-        val waterTex = Texture(wpix, false).apply {
+        val tex = Texture(wpix, false).apply {
             setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear)
             setWrap(Texture.TextureWrap.Repeat, Texture.TextureWrap.Repeat)
         }
         wpix.dispose()
-        loadedTextures.add(waterTex)
+        loadedTextures.add(tex)
+        return tex
+    }
 
+    private fun createWaterModel() {
+        waterTex = buildWaterTexture()
         waterTexAttr = TextureAttribute.createDiffuse(waterTex).apply {
             scaleU = 38f
             scaleV = 38f
@@ -583,7 +599,7 @@ class World3DRenderer(
         }
         loadedTextures.add(fogTexture)
 
-        val grid = 96
+        val grid = 128
         val count = grid + 1
         val step = MapLayout.SIZE / grid
         val verts = FloatArray(count * count * 8)
@@ -591,7 +607,7 @@ class World3DRenderer(
             for (gx in 0..grid) {
                 val wx = gx * step
                 val wz = gz * step
-                val h = terrainHeight(wx, wz) + 2.5f
+                val h = terrainHeight(wx, wz) + 3.2f
                 val base = (gz * count + gx) * 8
                 verts[base + 0] = wx
                 verts[base + 1] = h
@@ -730,6 +746,38 @@ class World3DRenderer(
         camera.update()
     }
 
+    override fun resume() {
+        super.resume()
+        if (::terrainTex.isInitialized && !Gdx.gl.glIsTexture(terrainTex.textureObjectHandle)) {
+            val oldTerrain = terrainTex
+            terrainTex = buildTerrainTexture()
+            terrainInstance.materials.firstOrNull()?.set(TextureAttribute.createDiffuse(terrainTex))
+            loadedTextures.remove(oldTerrain)
+            runCatching { oldTerrain.dispose() }
+
+            val oldWater = waterTex
+            waterTex = buildWaterTexture()
+            waterTexAttr = TextureAttribute.createDiffuse(waterTex).apply {
+                scaleU = 38f
+                scaleV = 38f
+            }
+            waterInstance.materials.firstOrNull()?.set(waterTexAttr)
+            loadedTextures.remove(oldWater)
+            runCatching { oldWater.dispose() }
+
+            val oldFog = fogTexture
+            fogTexture = Texture(fogPixmap, false).apply {
+                setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear)
+                setWrap(Texture.TextureWrap.ClampToEdge, Texture.TextureWrap.ClampToEdge)
+            }
+            loadedTextures.add(fogTexture)
+            fogInstance.materials.firstOrNull()?.set(TextureAttribute.createDiffuse(fogTexture))
+            loadedTextures.remove(oldFog)
+            runCatching { oldFog.dispose() }
+            updateFogPixmap()
+        }
+    }
+
     override fun render() {
         val dt = Gdx.graphics.deltaTime.coerceIn(0.001f, 0.05f)
 
@@ -781,6 +829,7 @@ class World3DRenderer(
             synchronized(camLock) {
                 snapInvProjView.set(camera.invProjectionView)
                 snapCamPos.set(camera.position)
+                snapGroundY = groundY
                 snapWidth = viewportWidth.toFloat()
                 snapHeight = viewportHeight.toFloat()
             }
@@ -836,8 +885,11 @@ class World3DRenderer(
         modelBatch.begin(camera)
         modelBatch.render(terrainInstance, environment)
         for (i in 0 until opaqueQueue.size) modelBatch.render(opaqueQueue[i], environment)
+        modelBatch.flush()
         modelBatch.render(waterInstance, environment)
+        modelBatch.flush()
         modelBatch.render(fogInstance) // Unlit volumetric dark-fantasy Fog of War shroud
+        modelBatch.flush()
         for (i in 0 until blendQueue.size) modelBatch.render(blendQueue[i])
         modelBatch.end()
     }
@@ -1208,14 +1260,14 @@ class World3DRenderer(
 
         val swinging = hero.attackAnimTimer > 0f && hero.attackAnimDuration > 0f
         val atkProg = if (swinging) 1f - (hero.attackAnimTimer / hero.attackAnimDuration).coerceIn(0f, 1f) else 0f
-        val combo = hero.attackComboStep // 0, 1, 2
+        val combo = hero.attackComboStep // 1 -> Hit 1, 2 -> Hit 2, 0 -> Hit 3 finisher
         val casting = hero.castAnimTimer > 0f
 
         // Dynamic 3-hit combo lunge & torso twist
         val lungeMag = when {
             !swinging -> 0f
             hero.def.isRanged -> -sin(atkProg * PI.toFloat()) * 5f // crisp recoil kick
-            combo == 2 -> sin(atkProg * PI.toFloat()) * 22f // heavy finisher lunge
+            combo == 0 -> sin(atkProg * PI.toFloat()) * 22f // Hit 3 heavy finisher lunge
             else -> sin(atkProg * PI.toFloat()) * 14f
         }
         val hx = hero.pos.x + cos(hero.facingAngle) * lungeMag
@@ -1223,13 +1275,13 @@ class World3DRenderer(
 
         val torsoTwist = when {
             !swinging -> 0f
-            combo == 0 -> -34f + atkProg * 68f
-            combo == 1 -> 34f - atkProg * 68f
+            combo == 1 -> -34f + atkProg * 68f
+            combo == 2 -> 34f - atkProg * 68f
             else -> -12f + atkProg * 24f
         }
         val torsoLean = when {
             !swinging -> if (casting) -12f else 0f
-            combo == 2 && !hero.def.isRanged -> -14f + sin(atkProg * PI.toFloat()) * 32f
+            combo == 0 && !hero.def.isRanged -> -14f + sin(atkProg * PI.toFloat()) * 32f
             else -> sin(atkProg * PI.toFloat()) * 10f
         }
 
@@ -1247,15 +1299,15 @@ class World3DRenderer(
 
         // Ground selection rings & attack target indicator
         if (hero.isPlayer) {
-            addRing(hero.pos.x, h + 3.2f, hero.pos.y, 44f, 0.18f, 0.94f, 0.48f, 0.78f)
+            addRing(hero.pos.x, h + 4.8f, hero.pos.y, 44f, 0.18f, 0.94f, 0.48f, 0.78f)
             if (showAttackRangeRing || hero.attackTargetId != null) {
-                addRing(hero.pos.x, h + 2.8f, hero.pos.y, hero.cachedAttackRange, 0.25f, 0.85f, 0.98f, 0.24f)
+                addRing(hero.pos.x, h + 4.2f, hero.pos.y, hero.cachedAttackRange, 0.25f, 0.85f, 0.98f, 0.24f)
             }
         } else if (isTargetLocked) {
             val pulse = 1.0f + sin(curTime * 9f) * 0.12f
-            addRing(hero.pos.x, h + 3.8f, hero.pos.y, 48f * pulse, 0.98f, 0.20f, 0.20f, 0.88f)
+            addRing(hero.pos.x, h + 5.2f, hero.pos.y, 48f * pulse, 0.98f, 0.20f, 0.20f, 0.88f)
         } else {
-            addRing(hero.pos.x, h + 2.5f, hero.pos.y, 38f,
+            addRing(hero.pos.x, h + 4.2f, hero.pos.y, 38f,
                 if (isAlly) 0.2f else 0.92f, if (isAlly) 0.62f else 0.20f, if (isAlly) 0.95f else 0.20f, 0.55f)
         }
 
@@ -1293,12 +1345,12 @@ class World3DRenderer(
             .scale(sc, sc, sc)
         submitPart(torsoKey, torso)
 
-        // Flowing Cape
+        // Flowing Cape (+X rotation pitches bottom -Y backward toward -Z)
         val capeFlutter = sin(curTime * 6f + hero.walkCycle) * 7f + (if (moving) 16f else 4f)
         val cape = pools["hero_cape$invSuffix"]!!.acquire(pr * 0.72f, pg * 0.72f, pb * 0.72f, alpha)
         cape.transform.setToTranslation(hx - cosA * 10f * sc, bodyY + 13f * sc, hz - sinA * 10f * sc)
             .rotate(Vector3.Y, angleDeg + torsoTwist * 0.6f)
-            .rotate(Vector3.X, -capeFlutter)
+            .rotate(Vector3.X, capeFlutter)
             .scale(sc, sc, sc)
         submitPart("hero_cape$invSuffix", cape)
 
@@ -1320,13 +1372,13 @@ class World3DRenderer(
             .scale(sc, sc, sc)
         submitPart(headKey, head)
 
-        // Left & Right Arms + 3-Hit Combo Weapon Swing!
+        // Left & Right Arms (swing opposite to legs) + 3-Hit Combo Weapon Swing!
         val shoulderY = bodyY + 11f * sc
         val shoulderSpread = when (hero.def.id) {
             "axe", "pudge", "earthshaker" -> 19f * sc
             else -> 14.5f * sc
         }
-        val leftArmPitch = if (casting) -65f else -walkSwing
+        val leftArmPitch = if (casting) -65f else walkSwing
         val leftArm = pools["hero_limb$invSuffix"]!!.acquire(pr * 0.85f, pg * 0.85f, pb * 0.85f, alpha)
         leftArm.transform.setToTranslation(hx - rx * shoulderSpread, shoulderY, hz - rz * shoulderSpread)
             .rotate(Vector3.Y, angleDeg + torsoTwist)
@@ -1343,20 +1395,20 @@ class World3DRenderer(
                 armYaw = 0f; armPitch = -78f; armRoll = 0f
             }
             !swinging -> {
-                armYaw = 16f; armPitch = -42f + walkSwing * 0.7f; armRoll = 0f
+                armYaw = 16f; armPitch = -42f - walkSwing * 0.7f; armRoll = 0f
             }
             hero.def.isRanged -> {
-                armYaw = if (combo == 1) -14f else 14f
+                armYaw = if (combo == 2) -14f else 14f
                 armPitch = -75f - sin(atkProg * PI.toFloat()) * 18f
                 armRoll = 0f
             }
-            combo == 0 -> {
+            combo == 1 -> {
                 // Hit 1: Forehand horizontal sweep (right -> left)
                 armYaw = -72f + atkProg * 144f
                 armPitch = -82f
                 armRoll = -80f
             }
-            combo == 1 -> {
+            combo == 2 -> {
                 // Hit 2: Backhand diagonal upward cut (left -> right)
                 armYaw = 74f - atkProg * 148f
                 armPitch = -74f
@@ -1421,27 +1473,29 @@ class World3DRenderer(
 
         // 3D Weapon Ribbon Trail during melee combo swings!
         if (swinging && !hero.def.isRanged && atkProg in 0.05f..0.95f) {
-            val ribAlpha = sin(atkProg * PI.toFloat()) * (if (hero.lastHitWasCrit || combo == 2) 0.92f else 0.78f)
+            val isFinisher = combo == 0
+            val ribAlpha = sin(atkProg * PI.toFloat()) * (if (hero.lastHitWasCrit || isFinisher) 0.92f else 0.78f)
             val ribR = if (hero.lastHitWasCrit) 1.0f else ar * 0.55f + 0.45f
             val ribG = if (hero.lastHitWasCrit) 0.24f else ag * 0.55f + 0.40f
             val ribB = if (hero.lastHitWasCrit) 0.16f else ab * 0.35f + 0.22f
 
-            val ribScale = (if (combo == 2) 78f else 66f) * sc
-            val ribTiltZ = when (combo) {
-                0 -> 6f
-                1 -> -32f
-                else -> 68f
-            }
-            val ribSweepRot = when (combo) {
-                0 -> angleDeg + (-42f + atkProg * 84f)
-                1 -> angleDeg + (42f - atkProg * 84f)
-                else -> angleDeg
-            }
+            val ribScale = (if (isFinisher) 78f else 66f) * sc
             val ribbon = pools["weapon_slash_ribbon"]!!.acquire(ribR, ribG, ribB, alpha = ribAlpha, emissive = 0.75f)
-            ribbon.transform.setToTranslation(hx, h + 44f * sc, hz)
-                .rotate(Vector3.Y, ribSweepRot)
-                .rotate(Vector3.Z, ribTiltZ)
-                .scale(ribScale, ribScale * 0.35f, ribScale)
+            when (combo) {
+                1 -> ribbon.transform.setToTranslation(hx, h + 44f * sc, hz)
+                    .rotate(Vector3.Y, angleDeg + (-42f + atkProg * 84f))
+                    .rotate(Vector3.Z, 6f)
+                    .scale(ribScale, ribScale * 0.35f, ribScale)
+                2 -> ribbon.transform.setToTranslation(hx, h + 44f * sc, hz)
+                    .rotate(Vector3.Y, angleDeg + (42f - atkProg * 84f))
+                    .rotate(Vector3.Z, -32f)
+                    .scale(ribScale, ribScale * 0.35f, ribScale)
+                else -> ribbon.transform.setToTranslation(hx, h + 48f * sc, hz)
+                    .rotate(Vector3.Y, angleDeg)
+                    .rotate(Vector3.Z, 90f)
+                    .rotate(Vector3.Y, 52f - atkProg * 104f)
+                    .scale(ribScale, ribScale * 0.40f, ribScale)
+            }
             blendQueue.add(ribbon)
         }
 
@@ -1615,10 +1669,16 @@ class World3DRenderer(
             }
 
             // Glowing 3D Projectile Trail!
+            val baseTrailRadius = when (p.kind) {
+                "meteor" -> 42f
+                "blast", "lance" -> 18f
+                "hook" -> 12f
+                else -> (p.radius * 1.35f).coerceAtMost(24f)
+            }
             for (ti in p.trail.indices) {
                 val tp = p.trail[ti]
                 val fade = 1f - (ti + 1).toFloat() / (p.trail.size + 1)
-                val ts = (p.radius * 1.35f) * fade
+                val ts = baseTrailRadius * fade
                 val tr = pools["vfx_sphere_blend"]!!.acquire(r, g, b, alpha = fade * 0.68f, emissive = 0.75f)
                 tr.transform.setToTranslation(tp.x, terrainHeight(tp.x, tp.y) + 34f, tp.y).scale(ts, ts, ts)
                 blendQueue.add(tr)
@@ -1721,7 +1781,7 @@ class World3DRenderer(
             val ndcY = 1f - (2f * sy / h)
             ray.origin.set(ndcX, ndcY, -1f).prj(snapInvProjView)
             ray.direction.set(ndcX, ndcY, 1f).prj(snapInvProjView).sub(ray.origin).nor()
-            planeY = terrainHeight(cameraController.cameraPos.x, cameraController.cameraPos.y)
+            planeY = snapGroundY
         }
         val groundPlane = Plane(Vector3.Y, -planeY)
         val hit = Vector3()

@@ -11,6 +11,7 @@ import android.view.View
 import android.view.animation.OvershootInterpolator
 import android.widget.Button
 import android.widget.GridLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -41,6 +42,8 @@ class HeroDraftActivity : AppCompatActivity() {
     private lateinit var detailPanel: LinearLayout
     private var pulseAnim: ObjectAnimator? = null
 
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         DotaAssetLoader.init(this)
@@ -52,7 +55,7 @@ class HeroDraftActivity : AppCompatActivity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(DotaRebornStyle.BG_OBSIDIAN)
-            setPadding(22, 14, 22, 14)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
         }
 
         // Top Bar
@@ -62,14 +65,16 @@ class HeroDraftActivity : AppCompatActivity() {
         }
         topBar.addView(TextView(this).apply {
             text = "HERO DRAFT  •  ${mode.title.uppercase()}"
-            textSize = 18f
+            textSize = 16.5f
             setTypeface(null, Typeface.BOLD)
             setTextColor(DotaRebornStyle.GOLD_BRIGHT)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
 
+        val topBtnsScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
+        val topBtns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         fun addFilterBtn(label: String, attr: PrimaryAttribute?) {
-            topBar.addView(DotaRebornStyle.rebornButton(
+            topBtns.addView(DotaRebornStyle.rebornButton(
                 this, label,
                 DotaRebornStyle.SLATE_TOP, DotaRebornStyle.SLATE_BOT,
                 attr?.colorHex ?: DotaRebornStyle.BRONZE_DARK, 11f
@@ -81,7 +86,7 @@ class HeroDraftActivity : AppCompatActivity() {
         addFilterBtn("ALL", null)
         PrimaryAttribute.entries.forEach { addFilterBtn(it.shortLabel, it) }
 
-        topBar.addView(DotaRebornStyle.rebornButton(
+        topBtns.addView(DotaRebornStyle.rebornButton(
             this, "SHUFFLE BOTS",
             DotaRebornStyle.SLATE_TOP, DotaRebornStyle.SLATE_BOT, DotaRebornStyle.BRONZE_GOLD, 11f
         ) {
@@ -89,10 +94,12 @@ class HeroDraftActivity : AppCompatActivity() {
             renderDraftStrip(animateAll = true)
         })
 
-        topBar.addView(DotaRebornStyle.rebornButton(
+        topBtns.addView(DotaRebornStyle.rebornButton(
             this, "BACK",
             DotaRebornStyle.CRIMSON_TOP, DotaRebornStyle.CRIMSON_BOT, 0xFFF87171.toInt(), 11f
         ) { finish() })
+        topBtnsScroll.addView(topBtns)
+        topBar.addView(topBtnsScroll)
         root.addView(topBar)
 
         // Animated 5v5 Team Draft Banner
@@ -205,7 +212,7 @@ class HeroDraftActivity : AppCompatActivity() {
                 slot.addView(ImageView(this).apply {
                     setImageBitmap(bmp)
                     scaleType = ImageView.ScaleType.CENTER_CROP
-                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 42)
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(26))
                 })
             }
             slot.addView(TextView(this).apply {
@@ -320,7 +327,7 @@ class HeroDraftActivity : AppCompatActivity() {
                 card.addView(ImageView(this).apply {
                     setImageBitmap(bmp)
                     scaleType = ImageView.ScaleType.CENTER_CROP
-                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 86)
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52))
                 })
             }
 
@@ -353,7 +360,7 @@ class HeroDraftActivity : AppCompatActivity() {
             val iv = ImageView(this).apply {
                 setImageBitmap(bmp)
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                layoutParams = LinearLayout.LayoutParams(156, 88).apply { rightMargin = 14 }
+                layoutParams = LinearLayout.LayoutParams(dp(92), dp(52)).apply { rightMargin = dp(8) }
             }
             if (animateSpotlight) {
                 iv.alpha = 0f
@@ -440,7 +447,7 @@ class HeroDraftActivity : AppCompatActivity() {
                 abRow.addView(ImageView(this).apply {
                     setImageBitmap(bmp)
                     scaleType = ImageView.ScaleType.CENTER_CROP
-                    layoutParams = LinearLayout.LayoutParams(42, 42).apply { rightMargin = 10 }
+                    layoutParams = LinearLayout.LayoutParams(dp(26), dp(26)).apply { rightMargin = dp(6) }
                 })
             }
             abRow.addView(TextView(this).apply {
