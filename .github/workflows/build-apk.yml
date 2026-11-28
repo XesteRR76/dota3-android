@@ -44,23 +44,41 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Generate Release Signing Keystore
+      - name: Configure Persistent Signing Keystores
+        env:
+          RELEASE_KS_B64: ${{ secrets.DOTA3_RELEASE_KEYSTORE_B64 }}
+          DEBUG_KS_B64: ${{ secrets.DOTA3_DEBUG_KEYSTORE_B64 }}
         run: |
-          mkdir -p keystore
-          keytool -genkeypair -v -keystore keystore/release.keystore \
-            -storepass dota3release -alias dota3key -keypass dota3release \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -dname "CN=Dota3,O=Antigravity,C=US"
+          mkdir -p keystore "$HOME/.android"
+          if [ -n "$RELEASE_KS_B64" ]; then
+            echo "$RELEASE_KS_B64" | base64 -d > keystore/release.keystore
+            echo "Restored persistent release keystore from secret."
+          else
+            keytool -genkeypair -v -keystore keystore/release.keystore \
+              -storepass dota3release -alias dota3key -keypass dota3release \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Dota3,O=Antigravity,C=US"
+          fi
+          keytool -list -keystore keystore/release.keystore -storepass dota3release -alias dota3key
+          if [ -n "$DEBUG_KS_B64" ]; then
+            echo "$DEBUG_KS_B64" | base64 -d > "$HOME/.android/debug.keystore"
+            echo "Restored persistent debug keystore from secret."
+            keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey
+          fi
 
       - name: Run Unit Tests & Build APKs
         run: |
           gradle testDebugUnitTest assembleDebug assembleRelease --no-daemon
 
-      - name: Package APKs
+      - name: Package & Verify Signed APKs
         run: |
           mkdir -p dist
           cp app/build/outputs/apk/debug/app-debug.apk dist/dota3-debug.apk
           cp app/build/outputs/apk/release/app-release.apk dist/dota3-release.apk
+          SDK_DIR="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          APKSIGNER="$SDK_DIR/build-tools/35.0.0/apksigner"
+          "$APKSIGNER" verify --print-certs dist/dota3-release.apk
+          "$APKSIGNER" verify --print-certs dist/dota3-debug.apk
           ls -lh dist/
           sha256sum dist/*.apk > dist/SHA256SUMS.txt
 
