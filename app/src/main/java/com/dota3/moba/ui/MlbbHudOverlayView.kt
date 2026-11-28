@@ -69,6 +69,24 @@ class MlbbHudOverlayView(
     private var panPointerId = -1
     private var panLastPos = Vec2()
 
+    // HUD 3x2 Inventory Drag-Swap / Inline Sell & Move state (grid indices 0..5)
+    private var itemPointerId = -1
+    private var itemDownGridSlot = -1
+    private var itemDownMs = 0L
+    private var itemDownPos = Vec2()
+    private var itemDragPos = Vec2()
+    private var itemDragActive = false
+    private var itemDragHoverSlot = -1
+    private var itemDragSellHovered = false
+    private var itemLongHoldTriggered = false
+    private var hudSelectedGridSlot = -1
+    private var hudSwapSourceGridSlot = -1
+    private val itemSellDropBox = BoxBounds()
+    private val itemActBarBox = BoxBounds()
+    private val itemActMoveBtn = BoxBounds()
+    private val itemActSellBtn = BoxBounds()
+    private val itemActCloseBtn = BoxBounds()
+
     private var matchEndNotified = false
 
     private val tacticalCmds = arrayOf(
@@ -186,6 +204,7 @@ class MlbbHudOverlayView(
             // 6. Bottom-Center Authentic Dota 2 Reborn Hero Console
             drawActiveBuffsStrip(canvas, uiScale)
             drawDotaHeroConsole(canvas, uiScale)
+            drawInventoryManageOverlays(canvas, uiScale)
 
             // 7. Right MLBB Attack Cluster + Enemy Hero Target-Lock Portraits + Skill Fan + Courier/Glyph
             drawAttackCluster(canvas)
@@ -875,11 +894,12 @@ class MlbbHudOverlayView(
         for (i in 0..5) {
             val b = geo.itemSlots[i]
             rectF.set(b.left, b.top, b.right, b.bottom)
-            val slot = ph.inventory.getOrNull(i)
+            val slot = ph.itemAtGridSlot(i)
             paint.style = Paint.Style.FILL
             paint.color = 0xDD101624.toInt()
             canvas.drawRoundRect(rectF, 6f, 6f, paint)
 
+            val isBeingDraggedFromHere = (itemDragActive && itemDownGridSlot == i)
             if (slot != null) {
                 val item = ItemCatalog.get(slot.itemId)
                 val icon = item?.let { DotaAssetLoader.getItemIcon(it.id) }
@@ -888,7 +908,9 @@ class MlbbHudOverlayView(
                     clipPath.reset()
                     clipPath.addRoundRect(RectF(b.left + 2f, b.top + 2f, b.right - 2f, b.bottom - 2f), 5f, 5f, Path.Direction.CW)
                     canvas.clipPath(clipPath)
+                    if (isBeingDraggedFromHere) paint.alpha = 95
                     canvas.drawBitmap(icon, null, RectF(b.left + 2f, b.top + 2f, b.right - 2f, b.bottom - 2f), paint)
+                    paint.alpha = 255
                     canvas.restore()
                 }
                 val lowManaItem = item != null && item.isActive && item.manaCost > ph.mana
@@ -928,14 +950,31 @@ class MlbbHudOverlayView(
                     canvas.drawText(tLbl, b.left + 3f, b.bottom - 3f, textPaint)
                 }
             }
+            val isSwapTarget = (hudSwapSourceGridSlot in 0..5 && hudSwapSourceGridSlot != i)
+            val isDragHover = (itemDragActive && itemDragHoverSlot == i && itemDownGridSlot != i)
             paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 1.8f
+            paint.strokeWidth = when {
+                isDragHover || hudSelectedGridSlot == i || hudSwapSourceGridSlot == i -> 2.8f
+                isSwapTarget -> 2.2f
+                else -> 1.8f
+            }
             paint.color = when {
+                isDragHover -> 0xFF34D399.toInt()
+                hudSwapSourceGridSlot == i -> 0xFF38BDF8.toInt()
+                isSwapTarget -> 0xFF34D399.toInt()
+                hudSelectedGridSlot == i -> 0xFFFDE047.toInt()
                 renderer3D.aimingItemSlotIdx == i -> 0xFF38BDF8.toInt()
                 slot != null -> 0xFFC89B3C.toInt()
                 else -> 0xFF334155.toInt()
             }
             canvas.drawRoundRect(rectF, 6f, 6f, paint)
+            if (isSwapTarget || isDragHover) {
+                textPaint.color = 0xFF34D399.toInt()
+                textPaint.textAlign = Paint.Align.CENTER
+                textPaint.typeface = Typeface.DEFAULT_BOLD
+                textPaint.textSize = (b.height() * 0.34f).coerceIn(9f, 15f)
+                canvas.drawText("⇄", b.centerX(), b.top + b.height() * 0.42f, textPaint)
+            }
         }
 
         // 6. TP Scroll Slot & Neutral Item Slot
@@ -974,6 +1013,117 @@ class MlbbHudOverlayView(
             canvas.drawText("T${neuDef.tier}", neuB.centerX(), neuB.bottom - 2f, textPaint)
         }
         textPaint.typeface = Typeface.DEFAULT
+    }
+
+    private fun drawInventoryManageOverlays(canvas: Canvas, uiScale: Float) {
+        val ph = world.playerHero
+        // Long-press timer: holding an item stationary >= 360ms opens Move / Sell popup without casting!
+        if (itemPointerId != -1 && !itemDragActive && !itemLongHoldTriggered && itemDownGridSlot in 0..5) {
+            if (SystemClock.uptimeMillis() - itemDownMs >= 360L) {
+                itemLongHoldTriggered = true
+                hudSelectedGridSlot = itemDownGridSlot
+                hudSwapSourceGridSlot = -1
+                if (aimPointerId == itemPointerId && renderer3D.aimingItemSlotIdx == itemDownGridSlot && !aimManualMoved) {
+                    aimPointerId = -1
+                    renderer3D.aimingItemSlotIdx = -1
+                }
+            }
+        }
+
+        val invLeft = geo.itemSlots[0].left
+        val invRight = geo.itemSlots[2].right
+        val invCenterX = (invLeft + invRight) * 0.5f
+
+        if (itemDragActive && itemDownGridSlot in 0..5) {
+            val dragSlot = ph.itemAtGridSlot(itemDownGridSlot)
+            val dragDef = dragSlot?.let { ItemCatalog.get(it.itemId) }
+            if (dragDef != null) {
+                val refund = (dragDef.cost * 0.5f).toInt()
+                val dropW = maxOf(invRight - invLeft + 18f * uiScale, 128f * uiScale)
+                val dropH = 26f * uiScale
+                val dropL = (invCenterX - dropW * 0.5f).coerceIn(8f, (width - dropW - 8f).coerceAtLeast(8f))
+                val dropB = geo.heroConsole.top - 8f
+                itemSellDropBox.set(dropL, dropB - dropH, dropL + dropW, dropB)
+                drawRebornBtn(
+                    canvas, itemSellDropBox,
+                    "SELL ${dragDef.shortCode} +${refund}g",
+                    if (itemDragSellHovered) 0xEEB91C1C.toInt() else 0xEA5C1414.toInt(),
+                    if (itemDragSellHovered) 0xFFFDE047.toInt() else 0xFFF87171.toInt()
+                )
+                // Floating item icon following finger
+                val fw = geo.itemSlots[0].width() * 1.15f
+                val fh = geo.itemSlots[0].height() * 1.15f
+                rectF.set(itemDragPos.x - fw * 0.5f, itemDragPos.y - fh * 0.5f, itemDragPos.x + fw * 0.5f, itemDragPos.y + fh * 0.5f)
+                paint.style = Paint.Style.FILL
+                paint.color = 0xE00B1018.toInt()
+                canvas.drawRoundRect(rectF, 6f, 6f, paint)
+                DotaAssetLoader.getItemIcon(dragDef.id)?.let { bmp ->
+                    canvas.drawBitmap(bmp, null, RectF(rectF.left + 2f, rectF.top + 2f, rectF.right - 2f, rectF.bottom - 2f), paint)
+                }
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = 2.4f
+                paint.color = if (itemDragSellHovered) 0xFFF87171.toInt() else if (itemDragHoverSlot in 0..5) 0xFF34D399.toInt() else 0xFFFDE047.toInt()
+                canvas.drawRoundRect(rectF, 6f, 6f, paint)
+            }
+            return
+        }
+
+        if (hudSwapSourceGridSlot in 0..5) {
+            val slot = ph.itemAtGridSlot(hudSwapSourceGridSlot)
+            val def = slot?.let { ItemCatalog.get(it.itemId) }
+            if (def == null) {
+                hudSwapSourceGridSlot = -1
+                return
+            }
+            val barW = maxOf(invRight - invLeft + 44f * uiScale, 178f * uiScale)
+            val barH = 26f * uiScale
+            val barL = (invCenterX - barW * 0.5f).coerceIn(8f, (width - barW - 8f).coerceAtLeast(8f))
+            val barB = geo.heroConsole.top - 6f
+            itemActBarBox.set(barL, barB - barH, barL + barW, barB)
+            val cancelW = 30f * uiScale
+            itemActMoveBtn.set(barL, barB - barH, barL + barW - cancelW - 4f, barB)
+            itemActCloseBtn.set(barL + barW - cancelW, barB - barH, barL + barW, barB)
+            itemActSellBtn.set(0f, 0f, 0f, 0f)
+            drawRebornBtn(canvas, itemActMoveBtn, "MOVE ${def.shortCode}: TAP SLOT 1-6", 0xEE0F3A4A.toInt(), 0xFF34D399.toInt())
+            drawRebornBtn(canvas, itemActCloseBtn, "✕", 0xEE1E293B.toInt(), 0xFF94A3B8.toInt())
+            return
+        }
+
+        if (hudSelectedGridSlot in 0..5) {
+            val slot = ph.itemAtGridSlot(hudSelectedGridSlot)
+            val def = slot?.let { ItemCatalog.get(it.itemId) }
+            if (def == null) {
+                hudSelectedGridSlot = -1
+                return
+            }
+            val refund = (def.cost * 0.5f).toInt()
+            val barW = maxOf(invRight - invLeft + 62f * uiScale, 206f * uiScale)
+            val barH = 27f * uiScale
+            val barL = (invCenterX - barW * 0.5f).coerceIn(8f, (width - barW - 8f).coerceAtLeast(8f))
+            val barB = geo.heroConsole.top - 6f
+            itemActBarBox.set(barL, barB - barH, barL + barW, barB)
+
+            paint.style = Paint.Style.FILL
+            paint.color = 0xF00B0F18.toInt()
+            rectF.set(itemActBarBox.left - 3f, itemActBarBox.top - 3f, itemActBarBox.right + 3f, itemActBarBox.bottom + 3f)
+            canvas.drawRoundRect(rectF, 8f, 8f, paint)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.6f
+            paint.color = 0xFFC89B3C.toInt()
+            canvas.drawRoundRect(rectF, 8f, 8f, paint)
+
+            val closeW = 24f * uiScale
+            val avail = barW - closeW - 8f
+            val moveW = avail * 0.44f
+            val sellW = avail * 0.56f
+            itemActMoveBtn.set(barL, barB - barH, barL + moveW, barB)
+            itemActSellBtn.set(itemActMoveBtn.right + 4f, barB - barH, itemActMoveBtn.right + 4f + sellW, barB)
+            itemActCloseBtn.set(itemActSellBtn.right + 4f, barB - barH, barL + barW, barB)
+
+            drawRebornBtn(canvas, itemActMoveBtn, "⇄ MOVE", 0xEE1E3A8A.toInt(), 0xFF60A5FA.toInt())
+            drawRebornBtn(canvas, itemActSellBtn, "SELL +${refund}g", 0xEE7F1D1D.toInt(), 0xFFFCA5A5.toInt())
+            drawRebornBtn(canvas, itemActCloseBtn, "✕", 0xEE1E293B.toInt(), 0xFF94A3B8.toInt())
+        }
     }
 
     private fun drawAttackCluster(canvas: Canvas) {
@@ -1195,6 +1345,44 @@ class MlbbHudOverlayView(
             }
             when (action) {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                    val phDown = world.playerHero
+                    if (hudSwapSourceGridSlot in 0..5) {
+                        if (itemActCloseBtn.contains(sx, sy)) {
+                            hudSwapSourceGridSlot = -1
+                            return true
+                        }
+                        for (ti in 0..5) {
+                            if (geo.itemSlots[ti].contains(sx, sy)) {
+                                world.swapInventoryGridSlots(phDown, hudSwapSourceGridSlot, ti)
+                                hudSwapSourceGridSlot = -1
+                                hudSelectedGridSlot = -1
+                                return true
+                            }
+                        }
+                        hudSwapSourceGridSlot = -1
+                    }
+                    if (hudSelectedGridSlot in 0..5 && phDown.itemAtGridSlot(hudSelectedGridSlot) != null) {
+                        if (itemActMoveBtn.contains(sx, sy)) {
+                            hudSwapSourceGridSlot = hudSelectedGridSlot
+                            hudSelectedGridSlot = -1
+                            return true
+                        }
+                        if (itemActSellBtn.contains(sx, sy)) {
+                            val soldDef = phDown.itemAtGridSlot(hudSelectedGridSlot)?.let { ItemCatalog.get(it.itemId) }
+                            if (world.sellItemAtGridSlot(phDown, hudSelectedGridSlot) && soldDef != null) {
+                                world.addFloatingText(phDown.pos, "SOLD ${soldDef.shortCode} +${(soldDef.cost * 0.5f).toInt()}g", 0xFFFDE047.toInt(), 0.9f)
+                            }
+                            hudSelectedGridSlot = -1
+                            return true
+                        }
+                        if (itemActCloseBtn.contains(sx, sy)) {
+                            hudSelectedGridSlot = -1
+                            return true
+                        }
+                        if (!itemActBarBox.contains(sx, sy) && (0..5).none { geo.itemSlots[it].contains(sx, sy) }) {
+                            hudSelectedGridSlot = -1
+                        }
+                    }
                     if (geo.minimap.contains(sx, sy)) {
                         minimapPointerId = pid
                         panFromMinimap(sx, sy)
@@ -1359,18 +1547,25 @@ class MlbbHudOverlayView(
                     for (i in 0..5) {
                         if (geo.itemSlots[i].contains(sx, sy)) {
                             val ph = world.playerHero
-                            val slot = ph.inventory.getOrNull(i) ?: return true
+                            val slot = ph.itemAtGridSlot(i)
+                            if (slot == null) {
+                                hudSelectedGridSlot = -1
+                                return true
+                            }
                             val def = ItemCatalog.get(slot.itemId) ?: return true
-                            if (!def.isActive) return true
-                            if (slot.cooldownRemaining > 0f) {
-                                world.addFloatingText(ph.pos, "${def.shortCode} CD ${slot.cooldownRemaining.toInt()}s", 0xFF94A3B8.toInt(), 0.6f)
-                                return true
-                            }
-                            if (ph.mana < def.manaCost) {
-                                world.addFloatingText(ph.pos, "NO MANA", 0xFF3498DB.toInt(), 0.6f)
-                                return true
-                            }
-                            if (isAimableItem(slot.itemId)) {
+                            itemPointerId = pid
+                            itemDownGridSlot = i
+                            itemDownMs = SystemClock.uptimeMillis()
+                            itemDownPos.set(sx, sy)
+                            itemDragPos.set(sx, sy)
+                            itemDragActive = false
+                            itemDragHoverSlot = i
+                            itemDragSellHovered = false
+                            itemLongHoldTriggered = false
+
+                            if (def.isActive && isAimableItem(slot.itemId) &&
+                                ph.alive && slot.cooldownRemaining <= 0f && ph.mana >= def.manaCost
+                            ) {
                                 aimPointerId = pid
                                 aimStartPos.set(sx, sy)
                                 aimCurrentPos.set(sx, sy)
@@ -1380,8 +1575,6 @@ class MlbbHudOverlayView(
                                 renderer3D.aimingAbilityIdx = -1
                                 val smart = smartItemTarget(slot.itemId)
                                 renderer3D.aimWorldPos.set(smart.x, smart.y)
-                            } else {
-                                world.useItemSlot(ph, i, ph.pos)
                             }
                             return true
                         }
@@ -1455,25 +1648,50 @@ class MlbbHudOverlayView(
                                 aimCurrentPos.set(mx, my)
                             }
                         } else if (p == aimPointerId && renderer3D.aimingItemSlotIdx >= 0) {
-                            aimingCancelHovered = hypot(mx - geo.cancelCenter.x, my - geo.cancelCenter.y) <= geo.cancelRadius + 32f
-                            val dx = mx - aimStartPos.x
-                            val dy = my - aimStartPos.y
-                            val dist = hypot(dx, dy)
-                            val maxR = geo.abilityRadius * 1.35f
-                            val deadzone = 20f
-                            if (dist > deadzone) {
-                                aimManualMoved = true
-                                val clamped = dist.coerceAtMost(maxR)
-                                aimCurrentPos.set(aimStartPos.x + (dx / dist) * clamped, aimStartPos.y + (dy / dist) * clamped)
-                                val slot = world.playerHero.inventory.getOrNull(renderer3D.aimingItemSlotIdx)
-                                val maxItemRange = if (slot?.itemId == "boots_of_travel") 2400f else 850f
-                                val factor = ((dist - deadzone) / (maxR - deadzone).coerceAtLeast(16f)).coerceIn(0.20f, 1.0f)
-                                renderer3D.aimWorldPos.set(
-                                    (world.playerHero.pos.x + (dx / dist) * maxItemRange * factor).coerceIn(0f, MapLayout.SIZE),
-                                    (world.playerHero.pos.y + (dy / dist) * maxItemRange * factor).coerceIn(0f, MapLayout.SIZE)
-                                )
-                            } else if (!aimManualMoved) {
-                                aimCurrentPos.set(mx, my)
+                            val overOtherSlot = (0..5).firstOrNull { geo.itemSlots[it].contains(mx, my) && it != itemDownGridSlot } ?: -1
+                            if (p == itemPointerId && overOtherSlot != -1) {
+                                // User dragged aimable item onto another inventory slot -> switch to swap drag!
+                                aimPointerId = -1
+                                renderer3D.aimingItemSlotIdx = -1
+                                aimManualMoved = false
+                                aimingCancelHovered = false
+                                itemDragActive = true
+                                hudSelectedGridSlot = -1
+                                itemDragPos.set(mx, my)
+                                itemDragHoverSlot = overOtherSlot
+                                itemDragSellHovered = itemSellDropBox.contains(mx, my)
+                            } else {
+                                if (p == itemPointerId) itemDragPos.set(mx, my)
+                                aimingCancelHovered = hypot(mx - geo.cancelCenter.x, my - geo.cancelCenter.y) <= geo.cancelRadius + 32f
+                                val dx = mx - aimStartPos.x
+                                val dy = my - aimStartPos.y
+                                val dist = hypot(dx, dy)
+                                val maxR = geo.abilityRadius * 1.35f
+                                val deadzone = 20f
+                                if (dist > deadzone) {
+                                    aimManualMoved = true
+                                    val clamped = dist.coerceAtMost(maxR)
+                                    aimCurrentPos.set(aimStartPos.x + (dx / dist) * clamped, aimStartPos.y + (dy / dist) * clamped)
+                                    val slot = world.playerHero.itemAtGridSlot(renderer3D.aimingItemSlotIdx)
+                                    val maxItemRange = if (slot?.itemId == "boots_of_travel") 2400f else 850f
+                                    val factor = ((dist - deadzone) / (maxR - deadzone).coerceAtLeast(16f)).coerceIn(0.20f, 1.0f)
+                                    renderer3D.aimWorldPos.set(
+                                        (world.playerHero.pos.x + (dx / dist) * maxItemRange * factor).coerceIn(0f, MapLayout.SIZE),
+                                        (world.playerHero.pos.y + (dy / dist) * maxItemRange * factor).coerceIn(0f, MapLayout.SIZE)
+                                    )
+                                } else if (!aimManualMoved) {
+                                    aimCurrentPos.set(mx, my)
+                                }
+                            }
+                        } else if (p == itemPointerId) {
+                            itemDragPos.set(mx, my)
+                            if (!itemLongHoldTriggered && !itemDragActive && hypot(mx - itemDownPos.x, my - itemDownPos.y) > 16f) {
+                                itemDragActive = true
+                                hudSelectedGridSlot = -1
+                            }
+                            if (itemDragActive) {
+                                itemDragHoverSlot = (0..5).firstOrNull { geo.itemSlots[it].contains(mx, my) } ?: -1
+                                itemDragSellHovered = itemSellDropBox.contains(mx, my)
                             }
                         } else if (p == panPointerId && event.pointerCount == 1) {
                             val dx = mx - panLastPos.x
@@ -1490,6 +1708,7 @@ class MlbbHudOverlayView(
                 }
 
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
+                    val wasAimingThisPointer = (pid == aimPointerId)
                     if (pid == minimapPointerId) minimapPointerId = -1
                     if (pid == panPointerId) panPointerId = -1
                     if (pid == attackPointerId) {
@@ -1508,13 +1727,55 @@ class MlbbHudOverlayView(
                         if (idxAb in 0..3 && !aimingCancelHovered) {
                             world.castAbility(world.playerHero, idxAb, renderer3D.aimWorldPos)
                         } else if (idxItem >= 0 && !aimingCancelHovered) {
-                            world.useItemSlot(world.playerHero, idxItem, renderer3D.aimWorldPos)
+                            world.useItemInGridSlot(world.playerHero, idxItem, renderer3D.aimWorldPos)
                         }
                         aimPointerId = -1
                         aimManualMoved = false
                         aimingCancelHovered = false
                         renderer3D.aimingAbilityIdx = -1
                         renderer3D.aimingItemSlotIdx = -1
+                    }
+                    if (pid == itemPointerId) {
+                        val ph = world.playerHero
+                        if (itemDragActive && itemDownGridSlot in 0..5) {
+                            if (itemDragSellHovered) {
+                                val def = ph.itemAtGridSlot(itemDownGridSlot)?.let { ItemCatalog.get(it.itemId) }
+                                if (world.sellItemAtGridSlot(ph, itemDownGridSlot) && def != null) {
+                                    world.addFloatingText(ph.pos, "SOLD ${def.shortCode} +${(def.cost * 0.5f).toInt()}g", 0xFFFDE047.toInt(), 0.9f)
+                                }
+                            } else if (itemDragHoverSlot in 0..5 && itemDragHoverSlot != itemDownGridSlot) {
+                                world.swapInventoryGridSlots(ph, itemDownGridSlot, itemDragHoverSlot)
+                            }
+                            hudSelectedGridSlot = -1
+                        } else if (!itemLongHoldTriggered && !wasAimingThisPointer && itemDownGridSlot in 0..5) {
+                            val slot = ph.itemAtGridSlot(itemDownGridSlot)
+                            val def = slot?.let { ItemCatalog.get(it.itemId) }
+                            if (def != null && def.isActive) {
+                                when {
+                                    !ph.alive -> hudSelectedGridSlot = if (hudSelectedGridSlot == itemDownGridSlot) -1 else itemDownGridSlot
+                                    slot.cooldownRemaining > 0f -> {
+                                        world.addFloatingText(ph.pos, "${def.shortCode} CD ${slot.cooldownRemaining.toInt()}s", 0xFF94A3B8.toInt(), 0.6f)
+                                        hudSelectedGridSlot = if (hudSelectedGridSlot == itemDownGridSlot) -1 else itemDownGridSlot
+                                    }
+                                    ph.mana < def.manaCost -> {
+                                        world.addFloatingText(ph.pos, "NO MANA", 0xFF3498DB.toInt(), 0.6f)
+                                        hudSelectedGridSlot = if (hudSelectedGridSlot == itemDownGridSlot) -1 else itemDownGridSlot
+                                    }
+                                    !isAimableItem(slot.itemId) -> {
+                                        world.useItemInGridSlot(ph, itemDownGridSlot, ph.pos)
+                                        hudSelectedGridSlot = -1
+                                    }
+                                }
+                            } else if (def != null) {
+                                hudSelectedGridSlot = if (hudSelectedGridSlot == itemDownGridSlot) -1 else itemDownGridSlot
+                            }
+                        }
+                        itemPointerId = -1
+                        itemDownGridSlot = -1
+                        itemDragActive = false
+                        itemDragHoverSlot = -1
+                        itemDragSellHovered = false
+                        itemLongHoldTriggered = false
                     }
                 }
 
@@ -1532,6 +1793,12 @@ class MlbbHudOverlayView(
                     aimingCancelHovered = false
                     renderer3D.aimingAbilityIdx = -1
                     renderer3D.aimingItemSlotIdx = -1
+                    itemPointerId = -1
+                    itemDownGridSlot = -1
+                    itemDragActive = false
+                    itemDragHoverSlot = -1
+                    itemDragSellHovered = false
+                    itemLongHoldTriggered = false
                 }
             }
         }

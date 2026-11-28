@@ -693,4 +693,60 @@ class GameEngineTest {
         assertEquals((allies + "juggernaut").toSet(), radIds)
         assertEquals(enemies.toSet(), direIds)
     }
+
+    @Test
+    fun inventorySwapAndSellByGridSlot() {
+        val world = GameWorld("juggernaut", mode = GameMode.SANDBOX)
+        val ph = world.playerHero
+        ph.inventory.clear()
+        ph.gold = 5000
+        assertTrue(world.buyItem(ph, "boots"))
+        assertTrue(world.buyItem(ph, "bkb"))
+        assertEquals("boots", ph.itemAtGridSlot(0)?.itemId)
+        assertEquals("bkb", ph.itemAtGridSlot(1)?.itemId)
+
+        // Move Boots from slot 0 into empty slot 4
+        assertTrue(world.swapInventoryGridSlots(ph, 0, 4))
+        assertNull(ph.itemAtGridSlot(0))
+        assertEquals("boots", ph.itemAtGridSlot(4)?.itemId)
+
+        // Swap BKB (slot 1) with Boots (slot 4)
+        assertTrue(world.swapInventoryGridSlots(ph, 1, 4))
+        assertEquals("boots", ph.itemAtGridSlot(1)?.itemId)
+        assertEquals("bkb", ph.itemAtGridSlot(4)?.itemId)
+
+        // Use BKB at grid slot 4
+        assertTrue(world.useItemInGridSlot(ph, 4))
+        assertTrue(ph.hasStatus(StatusType.MAGIC_IMMUNE))
+
+        // Sell Boots at grid slot 1 -> refunds 50% (250g) and keeps BKB in slot 4
+        val goldBefore = ph.gold
+        assertTrue(world.sellItemAtGridSlot(ph, 1))
+        assertEquals(goldBefore + 250, ph.gold)
+        assertNull(ph.itemAtGridSlot(1))
+        assertEquals("bkb", ph.itemAtGridSlot(4)?.itemId)
+    }
+
+    @Test
+    fun fogOfWarClearsDireSideWhenHeroMovesThere() {
+        val world = GameWorld("juggernaut", playerTeam = Team.RADIANT, mode = GameMode.ALL_PICK_5V5)
+        val ph = world.playerHero
+        val direJungleSpot = Vec2(3600f, 1200f)
+        val cellSize = world.fogOfWar.cellWorldSize()
+        val gx = (direJungleSpot.x / cellSize).toInt()
+        val gy = (direJungleSpot.y / cellSize).toInt()
+        assertEquals(0, world.fogOfWar.getCellState(gx, gy))
+
+        // Move player into Dire side and update fog
+        ph.pos.set(direJungleSpot.x, direJungleSpot.y)
+        world.updateFogOfWar()
+        assertEquals(2, world.fogOfWar.getCellState(gx, gy))
+        assertTrue(world.fogOfWar.isVisible(MapLayout.roshanPitPos.x, MapLayout.roshanPitPos.y).not())
+
+        // Also check Roshan pit clears cleanly when ally moves there
+        val ally = world.heroes.first { it.team == Team.RADIANT && !it.isPlayer }
+        ally.pos.set(MapLayout.roshanPitPos.x, MapLayout.roshanPitPos.y)
+        world.updateFogOfWar()
+        assertTrue(world.fogOfWar.isVisible(MapLayout.roshanPitPos.x, MapLayout.roshanPitPos.y))
+    }
 }

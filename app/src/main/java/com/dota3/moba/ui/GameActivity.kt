@@ -167,6 +167,8 @@ class GameActivity : AndroidApplication(), GameHudListener {
         val ph = world.playerHero
         var selectedCat = ItemCategory.CORE
         var inspectedItem = ItemCatalog.get(ph.quickBuyItemId ?: "bkb") ?: ItemCatalog.get("bkb") ?: ItemCatalog.allItems.first()
+        var selectedInvGridSlot = -1
+        var swapInvSourceSlot = -1
 
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -215,6 +217,20 @@ class GameActivity : AndroidApplication(), GameHudListener {
         })
         panel.addView(header)
 
+        val invBarScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            isFillViewport = true
+            background = DotaRebornStyle.beveledPanel(0xDD0D131F.toInt(), 0xDD070A10.toInt(), DotaRebornStyle.BRONZE_DARK, dp(7).toFloat(), 1)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(4)
+            }
+        }
+        val invBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(7), dp(4), dp(7), dp(4))
+        }
+        invBarScroll.addView(invBar)
         val tabScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
@@ -471,6 +487,121 @@ class GameActivity : AndroidApplication(), GameHudListener {
         refreshShop = {
             synchronized(world) {
                 goldTv.text = "DOTA 3 ARMORY  •  GOLD: ${ph.gold}g  •  STASH: ${ph.stash.size}  •  SHARD: ${if (ph.hasShard) "YES" else "NO"}"
+                if (selectedInvGridSlot !in 0..5 || ph.itemAtGridSlot(selectedInvGridSlot) == null) selectedInvGridSlot = -1
+                if (swapInvSourceSlot !in 0..5 || ph.itemAtGridSlot(swapInvSourceSlot) == null) swapInvSourceSlot = -1
+
+                invBar.removeAllViews()
+                invBar.addView(TextView(this).apply {
+                    text = if (swapInvSourceSlot in 0..5) "TAP SLOT 1-6:" else "BAG:"
+                    textSize = 10.5f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(if (swapInvSourceSlot in 0..5) 0xFF34D399.toInt() else DotaRebornStyle.BRONZE_GOLD)
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                        rightMargin = dp(6)
+                    }
+                })
+                for (gIdx in 0..5) {
+                    val slot = ph.itemAtGridSlot(gIdx)
+                    val def = slot?.let { ItemCatalog.get(it.itemId) }
+                    val isSrc = swapInvSourceSlot == gIdx
+                    val isSwapTgt = swapInvSourceSlot in 0..5 && swapInvSourceSlot != gIdx
+                    val isSel = selectedInvGridSlot == gIdx
+                    val tile = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL
+                        gravity = Gravity.CENTER
+                        background = DotaRebornStyle.beveledPanel(
+                            if (def != null) 0xEE182234.toInt() else 0xAA0C1018.toInt(),
+                            0xEE090D15.toInt(),
+                            when {
+                                isSrc -> 0xFF38BDF8.toInt()
+                                isSwapTgt -> 0xFF34D399.toInt()
+                                isSel -> DotaRebornStyle.GOLD_BRIGHT
+                                def != null -> DotaRebornStyle.BRONZE_GOLD
+                                else -> 0xFF334155.toInt()
+                            },
+                            dp(5).toFloat(),
+                            if (isSel || isSrc || isSwapTgt) 2 else 1
+                        )
+                        setPadding(dp(2), dp(2), dp(2), dp(2))
+                        layoutParams = LinearLayout.LayoutParams(dp(40), dp(30)).apply {
+                            rightMargin = dp(4)
+                        }
+                        setOnClickListener {
+                            synchronized(world) {
+                                if (swapInvSourceSlot in 0..5) {
+                                    if (swapInvSourceSlot != gIdx) {
+                                        world.swapInventoryGridSlots(ph, swapInvSourceSlot, gIdx)
+                                        selectedInvGridSlot = gIdx
+                                    }
+                                    swapInvSourceSlot = -1
+                                } else if (ph.itemAtGridSlot(gIdx) != null) {
+                                    selectedInvGridSlot = if (selectedInvGridSlot == gIdx) -1 else gIdx
+                                } else {
+                                    selectedInvGridSlot = -1
+                                }
+                            }
+                            refreshShop()
+                        }
+                    }
+                    if (def != null) {
+                        val bmp = DotaAssetLoader.getItemIcon(def.id)
+                        if (bmp != null) {
+                            tile.addView(ImageView(this).apply {
+                                setImageBitmap(bmp)
+                                scaleType = ImageView.ScaleType.CENTER_CROP
+                                layoutParams = LinearLayout.LayoutParams(dp(34), dp(24))
+                            })
+                        } else {
+                            tile.addView(TextView(this).apply {
+                                text = def.shortCode
+                                textSize = 9.5f
+                                setTypeface(null, Typeface.BOLD)
+                                setTextColor(Color.WHITE)
+                                gravity = Gravity.CENTER
+                            })
+                        }
+                    } else {
+                        tile.addView(TextView(this).apply {
+                            text = if (isSwapTgt) "⇄" else "${gIdx + 1}"
+                            textSize = 10f
+                            setTextColor(if (isSwapTgt) 0xFF34D399.toInt() else 0xFF475569.toInt())
+                            gravity = Gravity.CENTER
+                        })
+                    }
+                    invBar.addView(tile)
+                }
+
+                val selSlot = if (selectedInvGridSlot in 0..5) ph.itemAtGridSlot(selectedInvGridSlot) else null
+                val selDef = selSlot?.let { ItemCatalog.get(it.itemId) }
+                if (swapInvSourceSlot in 0..5) {
+                    invBar.addView(DotaRebornStyle.rebornButton(this, "CANCEL SWAP", DotaRebornStyle.SLATE_TOP, DotaRebornStyle.SLATE_BOT, 0xFF94A3B8.toInt(), 10f) {
+                        swapInvSourceSlot = -1
+                        refreshShop()
+                    })
+                } else if (selDef != null) {
+                    val refund = (selDef.cost * 0.5f).toInt()
+                    invBar.addView(DotaRebornStyle.rebornButton(this, "⇄ SWAP", 0xFF1E3A8A.toInt(), 0xFF0F172A.toInt(), 0xFF60A5FA.toInt(), 10f) {
+                        swapInvSourceSlot = selectedInvGridSlot
+                        refreshShop()
+                    }.apply {
+                        (layoutParams as? LinearLayout.LayoutParams)?.rightMargin = dp(4)
+                    })
+                    invBar.addView(DotaRebornStyle.rebornButton(this, "SELL +${refund}g", DotaRebornStyle.CRIMSON_TOP, DotaRebornStyle.CRIMSON_BOT, 0xFFFCA5A5.toInt(), 10f) {
+                        synchronized(world) { world.sellItemAtGridSlot(ph, selectedInvGridSlot) }
+                        selectedInvGridSlot = -1
+                        refreshShop()
+                    })
+                } else {
+                    invBar.addView(TextView(this).apply {
+                        text = "Tap any item slot to Swap ⇄ or Sell (50%)"
+                        textSize = 10f
+                        setTextColor(0xFF94A3B8.toInt())
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                            leftMargin = dp(4)
+                        }
+                    })
+                }
+
                 tabRow.removeAllViews()
                 for (cat in ItemCategory.entries) {
                     val isTabSel = cat == selectedCat
@@ -485,28 +616,6 @@ class GameActivity : AndroidApplication(), GameHudListener {
                     })
                 }
                 itemListLayout.removeAllViews()
-
-                if (ph.inventory.isNotEmpty()) {
-                    val invScroll = HorizontalScrollView(this).apply {
-                        isHorizontalScrollBarEnabled = false
-                        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                            bottomMargin = dp(5)
-                        }
-                    }
-                    val invRow = LinearLayout(this).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                    }
-                    ph.inventory.toList().forEachIndexed { idx, slot ->
-                        val def = ItemCatalog.get(slot.itemId)
-                        invRow.addView(DotaRebornStyle.rebornButton(this, "SELL ${def?.shortCode ?: "?"} +${((def?.cost ?: 0) * 0.5f).toInt()}g",
-                            DotaRebornStyle.SLATE_TOP, DotaRebornStyle.SLATE_BOT, 0xFF64748B.toInt(), 10f) {
-                            synchronized(world) { world.sellItem(ph, idx) }
-                            refreshShop()
-                        })
-                    }
-                    invScroll.addView(invRow)
-                    itemListLayout.addView(invScroll)
-                }
 
                 for (item in ItemCatalog.allItems.filter { it.category == selectedCat }) {
                     val effCost = world.effectiveItemCost(ph, item)
@@ -575,6 +684,7 @@ class GameActivity : AndroidApplication(), GameHudListener {
             renderCraftTree()
         }
 
+        panel.addView(invBarScroll)
         panel.addView(tabScroll)
         panel.addView(bodyRow)
         refreshShop()

@@ -2290,7 +2290,10 @@ class GameWorld(
         }
         consumeComponents(def.components)
 
-        val newSlot = ItemSlot(itemId, stacks = 1, charges = if (itemId == "magic_wand") 3 else 0)
+        val inheritedSlot = if (removedFromInv.isNotEmpty()) {
+            removedFromInv.minOf { if (it.slotPos in 0..5) it.slotPos else 99 }.takeIf { it in 0..5 } ?: -1
+        } else -1
+        val newSlot = ItemSlot(itemId, stacks = 1, charges = if (itemId == "magic_wand") 3 else 0, slotPos = inheritedSlot)
         hero.gold -= price
 
         val allCompsInInv = removedFromInv.isNotEmpty() && removedFromStash.isEmpty() && removedFromCargo.isEmpty()
@@ -2328,12 +2331,38 @@ class GameWorld(
 
     fun sellItem(hero: HeroEntity, slotIdx: Int): Boolean {
         if (slotIdx !in hero.inventory.indices) return false
-        val slot = hero.inventory.removeAt(slotIdx)
-        val def = ItemCatalog.get(slot.itemId) ?: return false
+        val def = ItemCatalog.get(hero.inventory[slotIdx].itemId) ?: return false
+        hero.inventory.removeAt(slotIdx)
         hero.gold += (def.cost * 0.5f).toInt()
         hero.hasScepter = hero.hasItem("aghanims_scepter")
         hero.recalcStats()
         return true
+    }
+
+    fun sellItemAtGridSlot(hero: HeroEntity, gridSlot: Int): Boolean {
+        val idx = hero.inventoryIndexForGridSlot(gridSlot)
+        return if (idx >= 0) sellItem(hero, idx) else false
+    }
+
+    /**
+     * Moves or swaps an item between any two 3x2 grid slots (0..5), including empty target slots.
+     */
+    fun swapInventoryGridSlots(hero: HeroEntity, fromGridSlot: Int, toGridSlot: Int): Boolean {
+        if (fromGridSlot !in 0..5 || toGridSlot !in 0..5 || fromGridSlot == toGridSlot) return false
+        hero.syncInventorySlots()
+        val fromItem = hero.inventory.firstOrNull { it.slotPos == fromGridSlot } ?: return false
+        val toItem = hero.inventory.firstOrNull { it.slotPos == toGridSlot }
+        fromItem.slotPos = toGridSlot
+        if (toItem != null) {
+            toItem.slotPos = fromGridSlot
+        }
+        hero.inventory.sortBy { it.slotPos }
+        return true
+    }
+
+    fun useItemInGridSlot(hero: HeroEntity, gridSlot: Int, target: Vec2 = hero.pos): Boolean {
+        val idx = hero.inventoryIndexForGridSlot(gridSlot)
+        return if (idx >= 0) useItemSlot(hero, idx, target) else false
     }
 
     fun dispatchCourier(hero: HeroEntity): Boolean {
@@ -2847,7 +2876,12 @@ class GameWorld(
             }
         }
         if (hero.inventory.size < 6) {
+            hero.syncInventorySlots()
+            if (slot.slotPos !in 0..5 || hero.inventory.any { it.slotPos == slot.slotPos }) {
+                slot.slotPos = (0..5).firstOrNull { g -> hero.inventory.none { it.slotPos == g } } ?: hero.inventory.size
+            }
             hero.inventory.add(slot)
+            hero.inventory.sortBy { it.slotPos }
             return true
         }
         return false

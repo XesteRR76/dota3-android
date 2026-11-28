@@ -359,9 +359,9 @@ class World3DRenderer(
                     g = 0.34f + nA * 0.055f + nB * 0.020f + detail * 0.045f
                     b = 0.16f + nA * 0.020f + detail * 0.025f
                 } else {
-                    r = 0.24f + nA * 0.045f + nB * 0.018f + detail * 0.040f
-                    g = 0.13f + nA * 0.022f + detail * 0.025f
-                    b = 0.15f + nA * 0.022f + detail * 0.025f
+                    r = 0.29f + nA * 0.050f + nB * 0.022f + detail * 0.045f
+                    g = 0.17f + nA * 0.028f + detail * 0.030f
+                    b = 0.19f + nA * 0.028f + detail * 0.030f
                 }
 
                 // High ground cliff & sunlit/volcanic plateau
@@ -373,9 +373,9 @@ class World3DRenderer(
                         g = DotaMath.lerp(g, 0.42f - cliffBand * 0.10f, hg)
                         b = DotaMath.lerp(b, 0.26f - cliffBand * 0.06f, hg)
                     } else {
-                        r = DotaMath.lerp(r, 0.34f - cliffBand * 0.08f, hg)
-                        g = DotaMath.lerp(g, 0.17f - cliffBand * 0.04f, hg)
-                        b = DotaMath.lerp(b, 0.19f - cliffBand * 0.04f, hg)
+                        r = DotaMath.lerp(r, 0.39f - cliffBand * 0.08f, hg)
+                        g = DotaMath.lerp(g, 0.21f - cliffBand * 0.04f, hg)
+                        b = DotaMath.lerp(b, 0.23f - cliffBand * 0.04f, hg)
                     }
                 }
 
@@ -389,9 +389,9 @@ class World3DRenderer(
                 if (roadMask > 0.01f) {
                     val cobble = (sin(wx * 0.11f) * cos(wz * 0.11f)) * 0.045f + detail * 0.04f
                     val borderMask = DotaMath.smoothstep(68f, 114f, minLaneDist)
-                    val rr = (if (isRad) 0.44f else 0.34f) - borderMask * 0.09f + cobble
-                    val rg = (if (isRad) 0.41f else 0.29f) - borderMask * 0.07f + cobble
-                    val rb = (if (isRad) 0.34f else 0.30f) - borderMask * 0.06f + cobble
+                    val rr = (if (isRad) 0.44f else 0.40f) - borderMask * 0.09f + cobble
+                    val rg = (if (isRad) 0.41f else 0.33f) - borderMask * 0.07f + cobble
+                    val rb = (if (isRad) 0.34f else 0.34f) - borderMask * 0.06f + cobble
                     r = DotaMath.lerp(r, rr, roadMask)
                     g = DotaMath.lerp(g, rg, roadMask)
                     b = DotaMath.lerp(b, rb, roadMask)
@@ -592,7 +592,10 @@ class World3DRenderer(
 
     private fun createFogOfWarModel() {
         val fSize = world.fogOfWar.size()
-        fogPixmap = Pixmap(fSize, fSize, Pixmap.Format.RGBA8888)
+        // Pixmap.Blending.None is critical: SourceOver accumulates alpha and makes cleared fog stay opaque black forever.
+        fogPixmap = Pixmap(fSize, fSize, Pixmap.Format.RGBA8888).apply {
+            blending = Pixmap.Blending.None
+        }
         fogTexture = Texture(fogPixmap, false).apply {
             setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear)
             setWrap(Texture.TextureWrap.ClampToEdge, Texture.TextureWrap.ClampToEdge)
@@ -724,14 +727,15 @@ class World3DRenderer(
 
     private fun updateFogPixmap() {
         val n = world.fogOfWar.size()
+        fogPixmap.blending = Pixmap.Blending.None
         for (gy in 0 until n) {
             for (gx in 0 until n) {
                 val a = when (world.fogOfWar.getCellState(gx, gy)) {
                     2 -> 0.0f
-                    1 -> 0.48f
-                    else -> 0.84f
+                    1 -> 0.34f
+                    else -> 0.60f
                 }
-                fogPixmap.setColor(0.03f, 0.05f, 0.09f, a)
+                fogPixmap.setColor(0.04f, 0.06f, 0.11f, a)
                 fogPixmap.drawPixel(gx, gy)
             }
         }
@@ -1735,7 +1739,7 @@ class World3DRenderer(
                 disc.transform.setToTranslation(aimWorldPos.x, ah + 5f, aimWorldPos.y).scale(rad * 1.9f, 4f, rad * 1.9f)
                 blendQueue.add(disc)
             }
-        } else if (aimingItemSlotIdx in ph.inventory.indices) {
+        } else if (aimingItemSlotIdx in 0..5 && ph.itemAtGridSlot(aimingItemSlotIdx) != null) {
             val ah = terrainHeight(aimWorldPos.x, aimWorldPos.y)
             addRing(ph.pos.x, h + 4f, ph.pos.y, 850f, 0.98f, 0.76f, 0.20f, 0.52f)
             addRing(aimWorldPos.x, ah + 5f, aimWorldPos.y, 95f, 1.0f, 0.82f, 0.18f, 0.78f)
@@ -1753,8 +1757,8 @@ class World3DRenderer(
         val gy = (wz / world.fogOfWar.cellWorldSize()).toInt().coerceIn(0, world.fogOfWar.size() - 1)
         return when (world.fogOfWar.getCellState(gx, gy)) {
             2 -> 1.0f
-            1 -> 0.62f
-            else -> 0.36f
+            1 -> 0.72f
+            else -> 0.48f
         }
     }
 

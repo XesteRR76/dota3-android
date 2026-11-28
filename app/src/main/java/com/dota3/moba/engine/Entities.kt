@@ -18,7 +18,8 @@ data class ItemSlot(
     var stacks: Int = 1,
     var charges: Int = 0,
     var cooldownRemaining: Float = 0f,
-    var treadMode: Int = 0 // 0=STR, 1=AGI, 2=INT
+    var treadMode: Int = 0, // 0=STR, 1=AGI, 2=INT
+    var slotPos: Int = -1 // 0..5 HUD/bag position (-1 auto-assigned)
 )
 
 enum class CreepType { MELEE, RANGED, SIEGE, SUPER_MELEE, MEGA_MELEE }
@@ -182,10 +183,39 @@ class HeroEntity(
 
     init {
         // Every hero starts with a free Town Portal Scroll & 1 Tango!
-        inventory.add(ItemSlot("tango", stacks = 2))
+        inventory.add(ItemSlot("tango", stacks = 2, slotPos = 0))
         recalcStats()
         hp = maxHp
         mana = maxMana
+    }
+
+    fun syncInventorySlots() {
+        val used = BooleanArray(6)
+        val unassigned = ArrayList<ItemSlot>(6)
+        for (slot in inventory) {
+            if (slot.slotPos in 0..5 && !used[slot.slotPos]) {
+                used[slot.slotPos] = true
+            } else {
+                unassigned.add(slot)
+            }
+        }
+        for (slot in unassigned) {
+            val free = (0..5).firstOrNull { !used[it] } ?: -1
+            slot.slotPos = free
+            if (free in 0..5) used[free] = true
+        }
+    }
+
+    fun itemAtGridSlot(gridSlot: Int): ItemSlot? {
+        if (gridSlot !in 0..5) return null
+        syncInventorySlots()
+        return inventory.firstOrNull { it.slotPos == gridSlot }
+    }
+
+    fun inventoryIndexForGridSlot(gridSlot: Int): Int {
+        if (gridSlot !in 0..5) return -1
+        syncInventorySlots()
+        return inventory.indexOfFirst { it.slotPos == gridSlot }
     }
 
     fun hasTalent(key: String): Boolean {
